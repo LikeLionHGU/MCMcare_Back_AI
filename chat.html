@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>MCM 케어 · AI 상담</title>
+<title>Custodia · AI 상담</title>
 <style>
   /* ── 색: MCM 톤(블랙 + 코냑 브라운) ─────────────────── */
   :root{
@@ -82,7 +82,7 @@
 <div class="app">
   <header>
     <div>
-      <div class="logo">MCM CARE</div>
+      <div class="logo">CUSTODIA</div>
       <div class="sub">AS 상담 · AI 챗봇</div>
     </div>
     <span class="dot" id="dot" title="서버 연결 상태"></span>
@@ -286,7 +286,7 @@ function greet() {
   fetch("/chat/opening" + (AS_ID ? "?as_id=" + encodeURIComponent(AS_ID) : ""))
     .then(r => r.json())
     .then(d => bubble("bot", d.message))
-    .catch(() => bubble("bot", "안녕하세요, MCM 케어입니다. 궁금한 점을 물어보세요."));
+    .catch(() => bubble("bot", "안녕하세요, Custodia입니다. 궁금한 점을 물어보세요."));
 }
 
 if (AS_ID) {

@@ -26,6 +26,7 @@
 """
 
 import os
+import time
 import logging
 
 log = logging.getLogger("spring_client")
@@ -38,6 +39,41 @@ except ImportError:                      # requests가 없어도 챗봇은 돌�
 BASE_URL = os.getenv("SPRING_API_URL", "").strip().rstrip("/")
 TOKEN = os.getenv("SPRING_API_TOKEN", "").strip()
 TIMEOUT = float(os.getenv("SPRING_TIMEOUT", "3"))
+CACHE_TTL = float(os.getenv("SPRING_CACHE_TTL", "30"))
+
+# 짧은 캐시.
+#
+# [왜 필요한가]
+# 챗봇은 고객이 말을 걸 때마다 접수 상세와 견적을 각각 한 번씩 불러온다.
+# 대화 한 턴에 HTTP 왕복이 2번씩 붙는 셈이라, 서버가 느리면 그만큼 답이 늦어지고
+# 서버가 죽어 있으면 타임아웃(기본 3초)을 매 턴 두 번씩 기다린다.
+# AS 진행 상태는 대화 중에 바뀌지 않으므로 짧게 캐시해도 안전하다.
+# 실패(None)도 캐시한다 — 죽은 서버를 매 턴 다시 찌를 이유가 없다.
+_cache = {}
+
+
+def _cache_get(key):
+    """(적중 여부, 값). 만료됐거나 없으면 (False, None)."""
+    hit = _cache.get(key)
+    if not hit:
+        return False, None
+    value, expires_at = hit
+    if time.time() > expires_at:
+        _cache.pop(key, None)
+        return False, None
+    return True, value
+
+
+def _cache_put(key, value):
+    _cache[key] = (value, time.time() + CACHE_TTL)
+    if len(_cache) > 200:                 # 메모리가 무한정 늘지 않게
+        oldest = min(_cache, key=lambda k: _cache[k][1])
+        _cache.pop(oldest, None)
+
+
+def clear_cache():
+    """대화 초기화 등 '지금 최신 값을 다시 보고 싶을 때' 쓴다."""
+    _cache.clear()
 
 
 def is_enabled():
@@ -109,8 +145,13 @@ def fetch_repair(as_id):
        코드가 없으면 '이 고객의 제품 스펙'까지는 답하지 못한다.
        광은님께 modelCode 필드 추가를 요청해 둔 상태.
     """
+    cached, value = _cache_get(f"detail:{as_id}")
+    if cached:
+        return value
+
     data = _get(f"/api/asCase/detail/{as_id}")
     if not data:
+        _cache_put(f"detail:{as_id}", None)
         return None
 
     history = data.get("historyList") or []
@@ -122,7 +163,7 @@ def fetch_repair(as_id):
         "note":   h.get("description") or "",
     } for h in history]
 
-    return {
+    result = {
         "as_id":           data.get("asNo") or as_id,
         "product_code":    data.get("modelCode") or "",     # 아직 없을 수 있음
         "product_name":    data.get("modelName") or "",
@@ -145,6 +186,8 @@ def fetch_repair(as_id):
         "timeline":        timeline,
         "_source":         "spring",
     }
+    _cache_put(f"detail:{as_id}", result)
+    return result
 
 
 # ─────────────────────────────────────────────────────────────
@@ -158,12 +201,18 @@ def fetch_estimate(as_id):
     이게 있으면 챗봇이 금액을 근거를 갖고 말할 수 있다.
     (지금은 자료가 없어서 'AI 예상 견적 받기'로 유도만 한다)
     """
+    cached, value = _cache_get(f"estimate:{as_id}")
+    if cached:
+        return value
+
     data = _get(f"/api/asCase/estimate/{as_id}")
     if not data:
+        _cache_put(f"estimate:{as_id}", None)
         return None
 
     items = data.get("itemList") or []
     if not items and data.get("totalMinPrice") is None:
+        _cache_put(f"estimate:{as_id}", None)
         return None                        # 아직 분석 전이면 지식으로 넣지 않는다
 
     lines = [
@@ -202,12 +251,14 @@ def fetch_estimate(as_id):
         "확정가가 아님을 반드시 함께 말한다. 범위를 벗어난 숫자는 절대 말하지 않는다."
     )
 
-    return {
+    result = {
         "topic": f"AI 예상 견적 {data.get('asNo', as_id)}",
         "keywords": [],                    # 검색이 아니라 항상 앞에 붙인다
         "source": "AI 예상 견적 (서버 분석 결과)",
         "content": "\n".join(lines),
     }
+    _cache_put(f"estimate:{as_id}", result)
+    return result
 
 
 if __name__ == "__main__":

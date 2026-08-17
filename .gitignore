@@ -26,7 +26,7 @@ Thumbs.db
 # ── 2026-08-13 추가 ────────────────────────────────────────
 # 작업 중 만든 백업본 (로컬에만 두면 된다)
 *.bak
-*.bak[0-9]
+*.bak*
 _to_delete/
 
 # 팀 공유용으로 만든 압축본 — 저장소에 넣으면 중복이다
@@ -45,3 +45,10 @@ failed_urls.txt
 MMKEAVE12CO001.html
 # 예전 중간 산출물 (mcm_products.csv로 대체됨)
 mcm_products_merged.csv
+
+# ── 문서는 로컬에만 둔다 ────────────────────────────────
+# 나중에 README를 올리려면:  git add -f README.md
+*.md
+cleanup_repo.sh
+push_new_repo.sh
+openai_연동부분.py

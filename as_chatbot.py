@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-MCM 케어 - AI 상담 챗봇
+Custodia - MCM 브랜드 AS AI 상담 챗봇
 
 [구조]
   질문 → ① 우리 자료에서 관련 부분 검색 → ② GPT에 [자료+질문] 전송 → ③ 답변
@@ -108,7 +108,7 @@ AS_KNOWLEDGE = [
         "topic": "AS 서비스 품질",
         "keywords": ["정품", "부자재", "기술", "품질", "공인", "믿을", "안전"],
         "content": (
-            "MCM 케어 AS는 정품 부자재와 공인 수선 기술을 사용합니다."
+            "Custodia의 MCM AS는 정품 부자재와 공인 수선 기술을 사용합니다."
         ),
     },
     {
@@ -703,7 +703,7 @@ def search(question, knowledge, top_as=3, top_product=2, summarize_from=2):
 # 4. GPT 호출
 # ─────────────────────────────────────────────────────────────
 
-SYSTEM_PROMPT = """당신은 MCM 케어의 AS 상담 직원입니다.
+SYSTEM_PROMPT = """당신은 Custodia의 MCM AS 상담 직원입니다.
 매장에서 손님을 응대하는 직원처럼, 친절하고 담백하게 말합니다.
 
 [내용 규칙 — 어길 수 없음]
@@ -1118,7 +1118,7 @@ OUT_OF_SCOPE = (
 
 GREETING_RE = re.compile(r"^(안녕|하이|헬로|hi|hello|반가|고마|감사|땡큐|thank|"
                          r"수고|잘\s*있어|안녕히|바이|bye|ㅎㅇ|ㅋㅋ+|ㅎㅎ+)")
-GREETING = "안녕하세요, MCM 케어입니다. 어떤 점이 궁금하신가요?"
+GREETING = "안녕하세요, Custodia입니다. 어떤 점이 궁금하신가요?"
 THANKS_RE = re.compile(r"^(고마|감사|땡큐|thank|수고|잘\s*있어|안녕히|바이|bye)")
 THANKS = "도움이 되었다면 다행이에요. 필요할 때 언제든 다시 찾아주세요."
 
@@ -1150,6 +1150,16 @@ def _no_hit(question):
     return OUT_OF_SCOPE, []
 
 
+# 수선 비용을 묻는 말인지 판단한다. 견적 조회는 비싼 작업이라 이때만 부른다.
+# "얼마나"는 기간·정도를 묻는 말이라 먼저 지운다. ("얼마나 남았어요?" = 배송 문의)
+MONEY_WORDS = ("얼마", "비용", "가격", "값", "견적", "수선비", "요금", "금액",
+               "돈", "무상", "유상", "보증", "청구", "결제", "지불")
+
+
+def _asks_about_money(question):
+    return any(w in (question or "").replace("얼마나", "") for w in MONEY_WORDS)
+
+
 def _retrieve(question, history=None, as_id=None):
     """
     검색까지만 담당한다. (일반 답변과 스트리밍 답변이 이 함수를 같이 쓴다)
@@ -1169,7 +1179,13 @@ def _retrieve(question, history=None, as_id=None):
     # 이 고객의 AI 예상 견적 결과가 서버에 있으면 함께 넣는다.
     # 왜: 견적이 이미 나온 건인데도 "견적 받아보세요"라고 답하면 앞뒤가 안 맞는다.
     # 자료가 있을 때만 금액을 말하고, 없으면 지금까지처럼 견적 화면으로 유도한다.
-    if repair and spring_client is not None and spring_client.is_enabled():
+    #
+    # ⚠️ 돈 얘기가 나올 때만 부른다.
+    # 서버의 견적 조회는 저장된 값을 읽는 게 아니라 그 시점에 AI 모델을 다시 돌린다
+    # (AsCaseFacade: "estimate 테이블이 없으므로 조회 시점에 재계산한다").
+    # 매 턴 부르면 말 한 마디마다 모델 추론이 도는 셈이라, 답이 느려지고 서버도 부담된다.
+    if repair and _asks_about_money(question) \
+            and spring_client is not None and spring_client.is_enabled():
         est = spring_client.fetch_estimate(repair["as_id"])
         if est:
             pinned.append(est)
@@ -1298,7 +1314,7 @@ def opening_message(as_id):
     """
     repair = find_repair(as_id)
     if not repair:
-        return ("안녕하세요, MCM 케어 AI 컨시어지입니다.\n"
+        return ("안녕하세요, Custodia AI 컨시어지입니다.\n"
                 "수선 접수나 제품 관리에 대해 궁금한 점을 편하게 물어보세요.")
 
     # 손상 표현은 자연어 설명(damage_description)을 우선 쓴다.
@@ -1310,7 +1326,7 @@ def opening_message(as_id):
             f"현재 '{repair['stage']}' 단계입니다.")
     if repair.get("expected_at"):
         line += f" 예상 완료일은 {repair['expected_at']}입니다."
-    return "안녕하세요, MCM 케어 AI 컨시어지입니다.\n" + line + " 궁금하신 점을 말씀해 주세요."
+    return "안녕하세요, Custodia AI 컨시어지입니다.\n" + line + " 궁금하신 점을 말씀해 주세요."
 
 
 # ─────────────────────────────────────────────────────────────
@@ -1323,7 +1339,7 @@ try:
     from fastapi.responses import FileResponse, StreamingResponse
     from pydantic import BaseModel
 
-    app = FastAPI(title="MCM 케어 - AI 상담", version="0.2.0")
+    app = FastAPI(title="Custodia - MCM AS AI 상담", version="0.3.0")
 
     # 프론트(세희·진성)가 다른 주소에서 개발 서버를 띄워도 호출할 수 있게 허용한다.
     # 브라우저는 기본적으로 '다른 주소로의 요청'을 막는데(CORS), 이 설정이 그 빗장을 푼다.
@@ -1506,7 +1522,9 @@ try:
     def repair_list():
         """로그인한 고객의 AS 접수 목록을 최근 순으로 돌려줍니다."""
         return {
-            "customer": CUSTOMER,
+            # '_'로 시작하는 키는 파일에 적어둔 내부 메모다. 밖으로 내보내지 않는다.
+            # (as_dummy.json에 "_membership_주의" 같은 설명을 적어두기 때문)
+            "customer": {k: v for k, v in CUSTOMER.items() if not k.startswith("_")},
             "count": len(REPAIRS),
             "repairs": [
                 {"as_id": r["as_id"], "product_name": r["product_name"],
@@ -1539,6 +1557,10 @@ try:
         gone = SESSIONS.pop(session_id, None) is not None
         if gone:
             _save_sessions()
+        # 서버 조회 캐시도 함께 비운다.
+        # 시연 중 어드민에서 상태를 바꾸고 다시 물어볼 때 옛 값이 남으면 안 되기 때문.
+        if spring_client is not None:
+            spring_client.clear_cache()
         return {"deleted": gone}
 
     @app.get("/health", summary="서버 상태 확인")
