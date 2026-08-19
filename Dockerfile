@@ -11,5 +11,5 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # 컨테이너 안에서는 8000 고정. 외부 포트는 실행할 때 매핑한다.
-EXPOSE 8000
-CMD ["uvicorn", "as_chatbot:app", "--host", "0.0.0.0", "--port", "8000"]
+EXPOSE 8001
+CMD ["uvicorn", "as_chatbot:app", "--host", "0.0.0.0", "--port", "8001"]

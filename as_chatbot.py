@@ -431,6 +431,24 @@ def resolve_product_code(product_name):
     return _NAME_TO_CODE.get(_norm_name(product_name))
 
 
+def color_of_code(product_code):
+    """
+    상품코드로 색상을 찾는다. 없으면 None.
+
+    왜: 피그마 '제품 정보 입력 화면'에 색상 입력란이 없고 DetailResDto에도 색상이 없다
+        (광은님 8/18 코멘트). 그래도 상품코드만 알면 우리가 수집한 750건에서
+        색상을 꺼내 쓸 수 있다. 고객에게 다시 묻지 않아도 된다.
+    """
+    if not product_code:
+        return None
+    topic = f"상품 {str(product_code).strip().upper()}"
+    for item in KNOWLEDGE:
+        if item["topic"].upper() == topic:
+            m = re.search(r"^색상: (.+)$", item["content"], re.M)
+            return m.group(1).strip() if m else None
+    return None
+
+
 def find_repair(as_id):
     """
     접수번호로 한 건을 찾는다. 대소문자·공백은 무시한다.
@@ -457,6 +475,8 @@ def find_repair(as_id):
                 code = resolve_product_code(found["product_name"])
                 if code:
                     found["product_code"] = code
+            if not found.get("color"):
+                found["color"] = color_of_code(found.get("product_code")) or ""
             return found
 
     for r in REPAIRS:
@@ -465,13 +485,39 @@ def find_repair(as_id):
     return None
 
 
+def _join_product(repair):
+    """
+    제품 표기. 있는 정보만 붙인다.
+
+    왜: 접수 화면에 색상 입력란이 없고(피그마 '제품 정보 입력 화면'),
+        DetailResDto에도 상품코드가 없다. 그대로 포맷하면
+        "제품: Stark 백팩 () []" 처럼 빈 괄호가 남아 GPT가 그걸 따라 쓴다.
+    """
+    parts = [repair.get("product_name") or "제품"]
+    if repair.get("color"):
+        parts.append(f"({repair['color']})")
+    if repair.get("product_code"):
+        parts.append(f"[{repair['product_code']}]")
+    return " ".join(parts)
+
+
+def _join_damage(repair):
+    """손상 표기. 유형·부위 중 있는 것만 붙인다."""
+    kind = repair.get("damage_type") or ""
+    part = repair.get("damage_part") or ""
+    if kind and part:
+        return f"{kind} ({part})"
+    return kind or part or "확인 필요"
+
+
 def repair_knowledge(repair):
     """
     접수 건 하나를 '지식 항목' 형태로 바꾼다.
     이렇게 해야 상품·AS 안내와 똑같은 방식으로 GPT에 넘길 수 있다.
     """
-    done = [t for t in repair["timeline"] if t["done"]]
-    todo = [t for t in repair["timeline"] if not t["done"]]
+    timeline = repair.get("timeline") or []
+    done = [t for t in timeline if t.get("done")]
+    todo = [t for t in timeline if not t.get("done")]
 
     lines = [
         "지금 상담 중인 고객의 AS 접수 건이다. 이 내용은 이 고객에게만 해당한다.",
@@ -494,26 +540,40 @@ def repair_knowledge(repair):
                 "먼저 언급하지 말고, 고객이 물으면 상담원 연결로 안내한다."
             )
 
-    lines += [
-        f"접수번호: {repair['as_id']}",
-        f"제품: {repair['product_name']} ({repair.get('color', '')}) "
-        f"[{repair['product_code']}]",
-        f"손상 내용: {repair.get('damage_type', '')} ({repair.get('damage_part', '')})",
-        f"접수 방식: {repair.get('intake_type', '')}",
-        f"접수일: {repair['received_at']}",
-        f"현재 단계: {repair['stage']}",
-        f"현재 위치: {repair.get('location', '')} ({repair.get('location_status', '')})",
-    ]
+    # 값이 없는 줄은 아예 넣지 않는다.
+    # 왜: Jackson 이 non_null 이라 광은님 응답에서 빠지는 필드가 있다.
+    #     "접수일: None" 이 자료로 들어가면 GPT 가 그대로 따라 쓴다.
+    for label, value in (
+        ("접수번호",  repair.get("as_id")),
+        ("제품",      _join_product(repair)),
+        ("손상 내용", _join_damage(repair)),
+        ("접수 방식", repair.get("intake_type")),
+        ("접수일",    repair.get("received_at")),
+        ("현재 단계", repair.get("stage")),
+    ):
+        if value:
+            lines.append(f"{label}: {value}")
+
+    loc = repair.get("location")
+    if loc:
+        st = repair.get("location_status")
+        lines.append(f"현재 위치: {loc} ({st})" if st else f"현재 위치: {loc}")
+
     if repair.get("expected_at"):
-        lines.append(f"예상 완료일: {repair['expected_at']} (최종 갱신 {repair['updated_at']})")
+        upd = repair.get("updated_at")
+        lines.append(f"예상 완료일: {repair['expected_at']}"
+                     + (f" (최종 갱신 {upd})" if upd else ""))
     if repair.get("tracking_number"):
         lines.append(f"운송장 번호: {repair['tracking_number']}")
 
-    lines.append("진행 이력:")
-    for t in done:
-        lines.append(f"- [완료] {t['step']} — {t['date']} · {t['note']}")
-    for t in todo:
-        lines.append(f"- [예정] {t['step']} — {t['note']}")
+    if done or todo:
+        lines.append("진행 이력:")
+        for t in done:
+            tail = " · ".join(x for x in (t.get("date"), t.get("note")) if x)
+            lines.append(f"- [완료] {t.get('step')}" + (f" — {tail}" if tail else ""))
+        for t in todo:
+            note = t.get("note")
+            lines.append(f"- [예정] {t.get('step')}" + (f" — {note}" if note else ""))
 
     return {
         "topic": f"내 AS 접수 {repair['as_id']}",
@@ -1319,11 +1379,15 @@ def opening_message(as_id):
 
     # 손상 표현은 자연어 설명(damage_description)을 우선 쓴다.
     # damage_type은 백엔드 enum 라벨("금속부품손상")이라 문장에 넣으면 딱딱하다.
+    # 서버(DetailResDto)에는 손상 정보가 없을 수 있다. 있는 것부터 순서대로 쓴다.
+    #   설명("지퍼 슬라이더가 빠져…") > 유형("금속부품손상") > 부위("메인 수납부 지퍼") > "수선"
     damage = (repair.get("damage_description")
-              or repair.get("damage_type") or "수선")
-    line = (f"{repair['as_id']} 건을 확인했습니다. "
-            f"{repair['product_name']} — {damage} 건이 "
-            f"현재 '{repair['stage']}' 단계입니다.")
+              or repair.get("damage_type")
+              or repair.get("damage_part")
+              or "수선")
+    line = (f"{repair.get('as_id')} 건을 확인했습니다. "
+            f"{repair.get('product_name') or '접수하신 제품'} — {damage} 건이 "
+            f"현재 '{repair.get('stage') or '확인 중'}' 단계입니다.")
     if repair.get("expected_at"):
         line += f" 예상 완료일은 {repair['expected_at']}입니다."
     return "안녕하세요, Custodia AI 컨시어지입니다.\n" + line + " 궁금하신 점을 말씀해 주세요."
@@ -1358,6 +1422,19 @@ try:
         print(f"[CORS] 허용 주소 {len(_origins)}개: {', '.join(_origins)}")
     else:
         print("[CORS] 전체 허용(개발용). 배포 시 ALLOWED_ORIGINS를 설정하세요.")
+
+    @app.middleware("http")
+    async def _pass_through_token(request, call_next):
+        """
+        프론트가 보낸 Authorization 헤더를 그대로 광은님 서버 호출에 물려준다.
+
+        왜: 광은님 서버는 JWT로 '누구인지'를 판별한다. 챗봇이 고정 토큰 하나만 쓰면
+            모든 고객이 같은 사람으로 조회돼 남의 접수 건이 보일 수 있다.
+            헤더가 없으면 기존대로 SPRING_API_TOKEN(또는 더미)으로 동작한다.
+        """
+        if spring_client is not None:
+            spring_client.set_request_token(request.headers.get("authorization", ""))
+        return await call_next(request)
 
     @app.get("/", include_in_schema=False)
     def home():

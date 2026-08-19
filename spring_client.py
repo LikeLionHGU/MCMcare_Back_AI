@@ -27,9 +27,29 @@
 
 import os
 import time
+import hashlib
 import logging
+from contextvars import ContextVar
 
 log = logging.getLogger("spring_client")
+
+# 요청마다 다른 JWT를 쓰기 위한 자리.
+#
+# [왜 필요한가]
+# 광은님 서버는 Spring Security + JWT 라서 "누가 보냈는지"를 토큰으로 판별한다.
+# 고정 토큰 하나를 환경변수에 박아두면 모든 고객이 같은 사람으로 취급된다.
+# 프론트가 챗봇을 부를 때 고객의 Authorization 헤더를 그대로 넘겨주면
+# 미들웨어가 여기에 담고, 그 턴의 Spring 호출에만 쓰인다.
+_request_token = ContextVar("spring_request_token", default="")
+
+
+def set_request_token(value):
+    """FastAPI 미들웨어가 매 요청 앞에서 호출한다. 'Bearer xxx' 통째로 받아도 된다."""
+    v = (value or "").strip()
+    if v.lower().startswith("bearer "):
+        v = v[7:].strip()
+    _request_token.set(v)
+    return v
 
 try:
     import requests
@@ -50,6 +70,20 @@ CACHE_TTL = float(os.getenv("SPRING_CACHE_TTL", "30"))
 # AS 진행 상태는 대화 중에 바뀌지 않으므로 짧게 캐시해도 안전하다.
 # 실패(None)도 캐시한다 — 죽은 서버를 매 턴 다시 찌를 이유가 없다.
 _cache = {}
+
+
+def _scoped(key):
+    """
+    캐시 키에 '누구의 토큰인지'를 섞는다.
+
+    왜: 토큰이 요청마다 다른데 캐시 키가 접수번호뿐이면,
+        A 고객이 받은 응답을 B 고객이 그대로 받아볼 수 있다. 개인정보 사고다.
+    토큰 원문을 키에 넣지 않고 해시 앞 12자만 쓴다 (로그·메모리 노출 최소화).
+    """
+    token = _request_token.get() or TOKEN
+    if not token:
+        return key
+    return f"{hashlib.sha256(token.encode()).hexdigest()[:12]}:{key}"
 
 
 def _cache_get(key):
@@ -82,9 +116,11 @@ def is_enabled():
 
 
 def _headers():
+    # 고객 토큰이 있으면 그것을 우선한다. 없으면 환경변수 토큰(데모·서버간 호출용).
+    token = _request_token.get() or TOKEN
     h = {"Accept": "application/json"}
-    if TOKEN:
-        h["Authorization"] = f"Bearer {TOKEN}"
+    if token:
+        h["Authorization"] = f"Bearer {token}"
     return h
 
 
@@ -145,13 +181,13 @@ def fetch_repair(as_id):
        코드가 없으면 '이 고객의 제품 스펙'까지는 답하지 못한다.
        광은님께 modelCode 필드 추가를 요청해 둔 상태.
     """
-    cached, value = _cache_get(f"detail:{as_id}")
+    cached, value = _cache_get(_scoped(f"detail:{as_id}"))
     if cached:
         return value
 
     data = _get(f"/api/asCase/detail/{as_id}")
     if not data:
-        _cache_put(f"detail:{as_id}", None)
+        _cache_put(_scoped(f"detail:{as_id}"), None)
         return None
 
     history = data.get("historyList") or []
@@ -186,7 +222,7 @@ def fetch_repair(as_id):
         "timeline":        timeline,
         "_source":         "spring",
     }
-    _cache_put(f"detail:{as_id}", result)
+    _cache_put(_scoped(f"detail:{as_id}"), result)
     return result
 
 
@@ -201,18 +237,18 @@ def fetch_estimate(as_id):
     이게 있으면 챗봇이 금액을 근거를 갖고 말할 수 있다.
     (지금은 자료가 없어서 'AI 예상 견적 받기'로 유도만 한다)
     """
-    cached, value = _cache_get(f"estimate:{as_id}")
+    cached, value = _cache_get(_scoped(f"estimate:{as_id}"))
     if cached:
         return value
 
     data = _get(f"/api/asCase/estimate/{as_id}")
     if not data:
-        _cache_put(f"estimate:{as_id}", None)
+        _cache_put(_scoped(f"estimate:{as_id}"), None)
         return None
 
     items = data.get("itemList") or []
     if not items and data.get("totalMinPrice") is None:
-        _cache_put(f"estimate:{as_id}", None)
+        _cache_put(_scoped(f"estimate:{as_id}"), None)
         return None                        # 아직 분석 전이면 지식으로 넣지 않는다
 
     lines = [
@@ -257,7 +293,7 @@ def fetch_estimate(as_id):
         "source": "AI 예상 견적 (서버 분석 결과)",
         "content": "\n".join(lines),
     }
-    _cache_put(f"estimate:{as_id}", result)
+    _cache_put(_scoped(f"estimate:{as_id}"), result)
     return result
 
 
