@@ -1,0 +1,19 @@
+# Render 배포 설정.
+# 대시보드에서 New > Blueprint 로 이 저장소를 연결하면 이 파일대로 뜬다.
+services:
+  - type: web
+    name: mcmcare-chatbot
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn as_chatbot:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false          # 대시보드에서 직접 입력 (코드에 남기지 않는다)
+      - key: SPRING_API_URL
+        sync: false          # 광은님 서버 주소. 비워두면 더미로 동작
+      - key: SPRING_API_TOKEN
+        sync: false
+      - key: PYTHON_VERSION
+        value: "3.11"

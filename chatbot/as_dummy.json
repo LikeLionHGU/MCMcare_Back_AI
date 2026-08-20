@@ -1,0 +1,268 @@
+{
+  "_설명": "데모용 가짜 AS 접수 데이터. 실제 고객 정보가 아니다.",
+  "_날짜_규칙": "날짜를 고정값으로 박으면 발표날에 '오래된 접수'로 보인다. 그래서 '며칠 전'으로 저장하고 서버가 읽을 때 실제 날짜로 바꾼다.",
+  "_상품코드": "mcm_products.csv에 실제로 있는 코드만 쓴다. 없는 코드를 쓰면 챗봇이 그 상품을 모른다.",
+  "_출처": "항목 구성은 피그마 Frame 716 '나의 AS 상세 화면' 명세를 따랐다.",
+  "_2026-08-13_변경": "광은님 백엔드(MCMcare_Back)에 맞춤. 접수번호 AS-%d-%05d(5자리), 단계는 AsStatus enum의 TIMELINE 7단계와 label을 그대로 사용. status에 enum 코드를 함께 넣어 매핑이 필요 없게 했다.",
+  "customer": {
+    "customer_id": "MCM-USER-0001",
+    "name": "김민서",
+    "membership": "GOLD",
+    "_membership_주의": "광은님 Member 엔티티에 멤버십 등급 필드가 없다. 기획 확인 필요."
+  },
+  "repairs": [
+    {
+      "as_id": "AS-2026-00871",
+      "status": "REPAIRING",
+      "stage": "수선 진행 중",
+      "product_code": "MMKEAVE12CO001",
+      "product_name": "Stark 사이드 스터드 비세토스 백팩",
+      "product_type": "BAG",
+      "color": "Cognac",
+      "damage_type_code": "METAL_PART",
+      "damage_type": "금속부품손상",
+      "damage_part": "메인 수납부 지퍼",
+      "damage_description": "지퍼 슬라이더가 빠져 잠기지 않음",
+      "intake_type": "픽업 수거 접수",
+      "received_days_ago": 21,
+      "expected_days_from_now": 9,
+      "updated_days_ago": 2,
+      "location": "MCM 서울 수선 센터",
+      "location_status": "수선 작업 중",
+      "timeline": [
+        {
+          "status": "PICKED_UP",
+          "step": "수거 완료",
+          "days_ago": 20,
+          "note": "기사 인계 후 수선 센터로 이동"
+        },
+        {
+          "status": "RECEIVED",
+          "step": "접수 완료",
+          "days_ago": 18,
+          "note": "수선 센터 입고 및 접수 처리"
+        },
+        {
+          "status": "DIAGNOSED",
+          "step": "진단 및 견적 확정",
+          "days_ago": 16,
+          "note": "실물 진단 후 수선 범위 확정"
+        },
+        {
+          "status": "REPAIRING",
+          "step": "수선 진행 중",
+          "days_ago": 15,
+          "note": "확정된 범위로 수선 작업 진행"
+        },
+        {
+          "status": "INSPECTING",
+          "step": "품질 검수",
+          "days_ago": null,
+          "note": "수선 완료 후 품질 기준 최종 점검"
+        },
+        {
+          "status": "SHIPPING",
+          "step": "반환 배송",
+          "days_ago": null,
+          "note": "검수 완료 후 고객 배송 진행"
+        },
+        {
+          "status": "COMPLETED",
+          "step": "완료",
+          "days_ago": null,
+          "note": "수선 완료 및 인계 종료"
+        }
+      ]
+    },
+    {
+      "as_id": "AS-2026-00914",
+      "status": "INSPECTING",
+      "stage": "품질 검수",
+      "product_code": "MMLGATA03CO001",
+      "product_name": "Aren 비세토스 슬링백",
+      "product_type": "BAG",
+      "color": "Cognac",
+      "damage_type_code": "STITCHING",
+      "damage_type": "봉제손상",
+      "damage_part": "어깨 스트랩 연결부",
+      "damage_description": "스트랩 연결부 봉제선 풀림",
+      "intake_type": "픽업 수거 접수",
+      "received_days_ago": 30,
+      "expected_days_from_now": 3,
+      "updated_days_ago": 1,
+      "location": "MCM 서울 수선 센터",
+      "location_status": "품질 검수 중",
+      "timeline": [
+        {
+          "status": "PICKED_UP",
+          "step": "수거 완료",
+          "days_ago": 29,
+          "note": "기사 인계 후 수선 센터로 이동"
+        },
+        {
+          "status": "RECEIVED",
+          "step": "접수 완료",
+          "days_ago": 27,
+          "note": "수선 센터 입고 및 접수 처리"
+        },
+        {
+          "status": "DIAGNOSED",
+          "step": "진단 및 견적 확정",
+          "days_ago": 25,
+          "note": "실물 진단 후 수선 범위 확정"
+        },
+        {
+          "status": "REPAIRING",
+          "step": "수선 진행 중",
+          "days_ago": 24,
+          "note": "확정된 범위로 수선 작업 진행"
+        },
+        {
+          "status": "INSPECTING",
+          "step": "품질 검수",
+          "days_ago": 1,
+          "note": "수선 완료 후 품질 기준 최종 점검"
+        },
+        {
+          "status": "SHIPPING",
+          "step": "반환 배송",
+          "days_ago": null,
+          "note": "검수 완료 후 고객 배송 진행"
+        },
+        {
+          "status": "COMPLETED",
+          "step": "완료",
+          "days_ago": null,
+          "note": "수선 완료 및 인계 종료"
+        }
+      ]
+    },
+    {
+      "as_id": "AS-2026-00602",
+      "status": "SHIPPING",
+      "stage": "반환 배송",
+      "product_code": "MYLGATA02CO001",
+      "product_name": "Aren 디스코 비세토스 지퍼 지갑",
+      "product_type": "WALLET",
+      "color": "Cognac",
+      "damage_type_code": "DISCOLOR",
+      "damage_type": "변색",
+      "damage_part": "지갑 외피 모서리",
+      "damage_description": "모서리 부분 색상 바램",
+      "intake_type": "픽업 수거 접수",
+      "received_days_ago": 45,
+      "expected_days_from_now": 1,
+      "updated_days_ago": 1,
+      "location": "CJ대한통운 배송 중",
+      "location_status": "고객 배송 중",
+      "tracking_number": "6812-3401-9925",
+      "timeline": [
+        {
+          "status": "PICKED_UP",
+          "step": "수거 완료",
+          "days_ago": 44,
+          "note": "기사 인계 후 수선 센터로 이동"
+        },
+        {
+          "status": "RECEIVED",
+          "step": "접수 완료",
+          "days_ago": 42,
+          "note": "수선 센터 입고 및 접수 처리"
+        },
+        {
+          "status": "DIAGNOSED",
+          "step": "진단 및 견적 확정",
+          "days_ago": 40,
+          "note": "실물 진단 후 수선 범위 확정"
+        },
+        {
+          "status": "REPAIRING",
+          "step": "수선 진행 중",
+          "days_ago": 38,
+          "note": "확정된 범위로 수선 작업 진행"
+        },
+        {
+          "status": "INSPECTING",
+          "step": "품질 검수",
+          "days_ago": 5,
+          "note": "수선 완료 후 품질 기준 최종 점검"
+        },
+        {
+          "status": "SHIPPING",
+          "step": "반환 배송",
+          "days_ago": 1,
+          "note": "검수 완료 후 고객 배송 진행"
+        },
+        {
+          "status": "COMPLETED",
+          "step": "완료",
+          "days_ago": null,
+          "note": "수선 완료 및 인계 종료"
+        }
+      ]
+    },
+    {
+      "as_id": "AS-2026-01033",
+      "status": "PICKUP_BOOKED",
+      "stage": "픽업 예약 완료 · 수거 대기 중",
+      "product_code": "MWHGAXT03CO001",
+      "product_name": "Tracy 비세토스 호보",
+      "product_type": "BAG",
+      "color": "Cognac",
+      "damage_type_code": "SCRATCH",
+      "damage_type": "긁힘",
+      "damage_part": "가방 앞면 하단",
+      "damage_description": "앞면 하단 스크래치",
+      "intake_type": "픽업 수거 접수",
+      "received_days_ago": 2,
+      "expected_days_from_now": 25,
+      "updated_days_ago": 2,
+      "location": "고객 보관 중",
+      "location_status": "픽업 대기",
+      "timeline": [
+        {
+          "status": "PICKED_UP",
+          "step": "수거 완료",
+          "days_ago": null,
+          "note": "기사 인계 후 수선 센터로 이동"
+        },
+        {
+          "status": "RECEIVED",
+          "step": "접수 완료",
+          "days_ago": null,
+          "note": "수선 센터 입고 및 접수 처리"
+        },
+        {
+          "status": "DIAGNOSED",
+          "step": "진단 및 견적 확정",
+          "days_ago": null,
+          "note": "실물 진단 후 수선 범위 확정"
+        },
+        {
+          "status": "REPAIRING",
+          "step": "수선 진행 중",
+          "days_ago": null,
+          "note": "확정된 범위로 수선 작업 진행"
+        },
+        {
+          "status": "INSPECTING",
+          "step": "품질 검수",
+          "days_ago": null,
+          "note": "수선 완료 후 품질 기준 최종 점검"
+        },
+        {
+          "status": "SHIPPING",
+          "step": "반환 배송",
+          "days_ago": null,
+          "note": "검수 완료 후 고객 배송 진행"
+        },
+        {
+          "status": "COMPLETED",
+          "step": "완료",
+          "days_ago": null,
+          "note": "수선 완료 및 인계 종료"
+        }
+      ]
+    }
+  ]
+}

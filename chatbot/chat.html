@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Custodia · AI 상담</title>
+<style>
+  /* ── 색: MCM 톤(블랙 + 코냑 브라운) ─────────────────── */
+  :root{
+    --bg:#f4f2ef; --panel:#fff; --ink:#1a1a1a; --sub:#8a8178;
+    --line:#e3ded7; --brand:#1a1a1a; --cognac:#8b5e34; --warn:#b4472e;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Pretendard",sans-serif;
+    background:var(--bg); color:var(--ink); display:flex; justify-content:center;
+    min-height:100vh; padding:24px 16px;
+  }
+  .app{width:100%; max-width:560px; display:flex; flex-direction:column;
+       background:var(--panel); border:1px solid var(--line); border-radius:16px;
+       overflow:hidden; height:calc(100vh - 48px); box-shadow:0 4px 24px rgba(0,0,0,.06);}
+
+  header{padding:18px 20px; border-bottom:1px solid var(--line);
+         display:flex; align-items:center; gap:12px;}
+  .logo{font-weight:800; letter-spacing:.14em; font-size:15px;}
+  .sub{font-size:12px; color:var(--sub);}
+  .dot{width:7px; height:7px; border-radius:50%; background:#c8c2ba; margin-left:auto;}
+  .dot.on{background:#3f9e5a;}
+  .reset{border:1px solid var(--line); background:none; color:var(--sub);
+         font-size:11px; padding:5px 10px; border-radius:20px; cursor:pointer;}
+  .reset:hover{color:var(--ink); border-color:var(--sub);}
+
+  /* 상담 중인 AS 접수 건 요약 (기획 Frame 717 상단 영역) */
+  .asbar{display:flex; gap:22px; padding:12px 20px; background:#faf8f5;
+         border-bottom:1px solid var(--line); font-size:12px;}
+  .asbar div{display:flex; flex-direction:column; gap:3px;}
+  .asbar .k{color:var(--sub); font-size:10.5px;}
+  .asbar .v{color:var(--ink);}
+  .asbar .v.stage{color:var(--cognac);}
+
+  #log{flex:1; overflow-y:auto; padding:20px; display:flex; flex-direction:column; gap:14px;}
+  .row{display:flex; flex-direction:column; max-width:86%;}
+  .row.me{align-self:flex-end; align-items:flex-end;}
+  .row.bot{align-self:flex-start;}
+  .bubble{padding:11px 14px; border-radius:14px; font-size:14px; line-height:1.65;
+          white-space:pre-wrap; word-break:break-word;}
+  .me .bubble{background:var(--brand); color:#fff; border-bottom-right-radius:4px;}
+  .bot .bubble{background:#f3f0ec; border:1px solid var(--line); border-bottom-left-radius:4px;}
+
+  /* 스트리밍 중 깜빡이는 커서 — "지금 쓰고 있다"는 신호 */
+  .bubble.live::after{content:"▌"; color:var(--cognac); animation:blink .9s steps(1) infinite;}
+  @keyframes blink{50%{opacity:0}}
+
+  /* 근거: 어떤 자료로 답했는지 보여준다. 시연에서 "지어낸 게 아니다"를 증명하는 장치 */
+  .meta{display:flex; flex-wrap:wrap; gap:5px; margin-top:6px;}
+  .tag{font-size:10.5px; color:var(--sub); background:#fff;
+       border:1px solid var(--line); padding:2.5px 8px; border-radius:20px;}
+  .tag.src{color:var(--cognac); border-color:#e0d2c2; background:#fdfaf6;}
+  .tag.warn{color:var(--warn); border-color:#f0d6ce; background:#fdf6f4;}
+
+  .chips{display:flex; flex-wrap:wrap; gap:7px; padding:0 20px 14px;}
+  .chip{font-size:12px; border:1px solid var(--line); background:#fff; color:var(--sub);
+        padding:7px 12px; border-radius:20px; cursor:pointer;}
+  .chip:hover{border-color:var(--cognac); color:var(--cognac);}
+
+  form{display:flex; gap:8px; padding:14px 16px; border-top:1px solid var(--line);}
+  input{flex:1; border:1px solid var(--line); border-radius:22px; padding:11px 16px;
+        font-size:14px; outline:none; font-family:inherit;}
+  input:focus{border-color:var(--ink);}
+  button.send{border:none; background:var(--brand); color:#fff; border-radius:22px;
+              padding:0 20px; font-size:14px; cursor:pointer; font-family:inherit;}
+  button.send:disabled{background:#c8c2ba; cursor:default;}
+
+  .typing span{display:inline-block; width:5px; height:5px; margin-right:3px;
+    background:var(--sub); border-radius:50%; animation:b 1.2s infinite;}
+  .typing span:nth-child(2){animation-delay:.2s}
+  .typing span:nth-child(3){animation-delay:.4s}
+  @keyframes b{0%,60%,100%{opacity:.25} 30%{opacity:1}}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div>
+      <div class="logo">CUSTODIA</div>
+      <div class="sub">AS 상담 · AI 챗봇</div>
+    </div>
+    <span class="dot" id="dot" title="서버 연결 상태"></span>
+    <button class="reset" id="reset">대화 초기화</button>
+  </header>
+
+  <div class="asbar" id="asbar" style="display:none"></div>
+
+  <div id="log"></div>
+  <div class="chips" id="chips"></div>
+
+  <form id="form">
+    <input id="msg" placeholder="궁금한 점을 입력하세요" autocomplete="off">
+    <button class="send" id="send">전송</button>
+  </form>
+</div>
+
+<script>
+// 세션 ID: 이 값을 계속 같이 보내야 서버가 대화를 기억한다.
+const SESSION = "web-" + Math.random().toString(36).slice(2, 10);
+
+// AS 접수번호. 주소창에 ?as_id=AS-2026-00871 를 붙이면 그 건을 상담한다.
+// 실제 서비스에서는 '나의 AS 상세'에서 [이 AS 건 상담하기]를 누를 때 넘어온다.
+const AS_ID = new URLSearchParams(location.search).get("as_id");
+
+// 개발자 모드. 주소에 ?dev=1 을 붙였을 때만 켠다.
+//
+// 왜: 예시 질문 칩과 근거 태그는 '검색이 제대로 되는지' 확인하려고 만든 것이다.
+//     시연에서 심사위원에게는 대화만 보여야 한다.
+//     칩이 있으면 정해진 질문만 눌러본 것처럼 보이고,
+//     근거 태그("고정 안내문" 등)는 내부 용어라 손님 화면에 있을 이유가 없다.
+const DEV = new URLSearchParams(location.search).get("dev") === "1";
+
+const log = document.getElementById("log");
+const form = document.getElementById("form");
+const input = document.getElementById("msg");
+const sendBtn = document.getElementById("send");
+const dot = document.getElementById("dot");
+
+// 예시 질문. 접수 건을 상담 중이면 그 건에 대한 질문을 보여준다.
+const SAMPLES = AS_ID
+  ? ["제 가방 지금 어디에 있어요?", "언제 다 돼요?", "어디까지 진행됐어요?", "수선 끝나면 어떻게 받아요?"]
+  : ["수선 얼마나 걸려요?", "AS 접수하려면 뭐 준비해요?", "사이드 스터드 백팩 치수 알려줘", "가방에 물이 묻었어요"];
+
+// 레이아웃이 반영된 뒤에 스크롤해야 마지막 줄이 안 잘린다.
+// (근거 태그가 두 줄로 늘어날 때 아래가 가려지는 문제가 있었다)
+function scroll() {
+  log.scrollTop = log.scrollHeight;
+  requestAnimationFrame(() => { log.scrollTop = log.scrollHeight; });
+}
+
+// 빈 말풍선을 만들고 {row, bubble}을 돌려준다. 스트리밍은 여기에 글자를 채워 넣는다.
+function newBubble(who) {
+  const row = document.createElement("div");
+  row.className = "row " + who;
+  const b = document.createElement("div");
+  b.className = "bubble";
+  row.appendChild(b);
+  log.appendChild(row);
+  scroll();
+  return { row, b };
+}
+
+function bubble(who, text, tags = []) {
+  const { row, b } = newBubble(who);
+  b.textContent = text;
+  if (tags.length) addTags(row, tags);
+  return row;
+}
+
+// 근거·상태 태그를 말풍선 아래에 붙인다.
+function addTags(row, tags) {
+  const meta = document.createElement("div");
+  meta.className = "meta";
+  tags.forEach(t => {
+    const s = document.createElement("span");
+    s.className = "tag " + (t.kind || "");
+    s.textContent = t.text;
+    meta.appendChild(s);
+  });
+  row.appendChild(meta);
+  scroll();
+}
+
+// 근거 태그. 내부 용어가 손님 눈에 그대로 보이지 않게 표현을 다듬는다.
+function tagsFromMeta(m) {
+  if (!DEV) return [];          // 시연 화면에는 근거 태그를 띄우지 않는다
+  const tags = (m.sources || []).map(s => {
+    const cnt = s.match(/검색 요약 \(상품 (\d+)건/);
+    return { text: cnt ? `제품 ${cnt[1]}개 비교` : s.replace(/^상품 /, ""), kind: "src" };
+  });
+  if (!m.used_gpt) tags.push({ text: "고정 안내문", kind: "" });
+  if (m.used_history) tags.push({ text: "이전 대화 참고", kind: "" });
+  if (m.masked > 0) tags.push({ text: `개인정보 ${m.masked}건 가림`, kind: "warn" });
+  return tags;
+}
+
+function typing() {
+  const row = document.createElement("div");
+  row.className = "row bot";
+  row.innerHTML = '<div class="bubble typing"><span></span><span></span><span></span></div>';
+  log.appendChild(row);
+  scroll();
+  return row;
+}
+
+async function send(text) {
+  bubble("me", text);
+  input.value = "";
+  sendBtn.disabled = true;
+  const wait = typing();
+
+  let row = null, b = null, meta = null, full = "";
+
+  try {
+    // /chat/stream 은 답변을 조각으로 흘려보낸다 (SSE).
+    // 조각이 올 때마다 말풍선에 이어 붙여서 "쓰고 있는" 느낌을 만든다.
+    const res = await fetch("/chat/stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: text, session_id: SESSION, as_id: AS_ID }),
+    });
+    if (!res.ok || !res.body) throw new Error("bad response");
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+
+      // SSE는 빈 줄 두 개로 메시지를 구분한다.
+      const parts = buf.split("\n\n");
+      buf = parts.pop();
+
+      for (const part of parts) {
+        const line = part.replace(/^data:\s*/, "").trim();
+        if (!line) continue;
+        const d = JSON.parse(line);
+
+        if (d.type === "meta") {
+          meta = d;
+          wait.remove();
+          ({ row, b } = newBubble("bot"));
+          b.classList.add("live");        // 깜빡이는 커서 시작
+        } else if (d.type === "delta") {
+          full += d.text;
+          if (b) { b.textContent = full; scroll(); }
+        } else if (d.type === "done") {
+          if (b) { b.classList.remove("live"); b.textContent = full.trim(); }
+          if (row && meta) addTags(row, tagsFromMeta(meta));
+        }
+      }
+    }
+    if (b) b.classList.remove("live");
+    dot.classList.add("on");
+  } catch (e) {
+    wait.remove();
+    if (row) row.remove();
+    bubble("bot", "서버에 연결하지 못했습니다. 터미널에서 uvicorn이 켜져 있는지 확인해 주세요.",
+           [{ text: "연결 실패", kind: "warn" }]);
+    dot.classList.remove("on");
+  }
+
+  sendBtn.disabled = false;
+  input.focus();
+}
+
+form.addEventListener("submit", e => {
+  e.preventDefault();
+  const t = input.value.trim();
+  if (t) send(t);
+});
+
+const chips = document.getElementById("chips");
+if (!DEV) chips.style.display = "none";
+SAMPLES.forEach(q => {
+  const c = document.createElement("button");
+  c.className = "chip";
+  c.textContent = q;
+  c.onclick = () => send(q);
+  chips.appendChild(c);
+});
+
+document.getElementById("reset").onclick = async () => {
+  await fetch("/chat/" + SESSION, { method: "DELETE" }).catch(() => {});
+  log.innerHTML = "";
+  greet();
+};
+
+// 상담 중인 접수 건 요약을 상단에 띄운다 (기획 Frame 717)
+function showAsBar(r) {
+  const bar = document.getElementById("asbar");
+  bar.innerHTML = "";
+  [["접수 번호", r.as_id, ""],
+   ["제품명", r.product_name, ""],
+   ["진행 상태", r.stage, "stage"]].forEach(([k, v, cls]) => {
+    const d = document.createElement("div");
+    const kk = document.createElement("span"); kk.className = "k"; kk.textContent = k;
+    const vv = document.createElement("span"); vv.className = "v " + cls; vv.textContent = v;
+    d.append(kk, vv);
+    bar.appendChild(d);
+  });
+  bar.style.display = "flex";
+}
+
+// 첫 인사말은 서버가 만들어준다. GPT를 안 부르므로 즉시 뜨고 항상 정확하다.
+function greet() {
+  fetch("/chat/opening" + (AS_ID ? "?as_id=" + encodeURIComponent(AS_ID) : ""))
+    .then(r => r.json())
+    .then(d => bubble("bot", d.message))
+    .catch(() => bubble("bot", "안녕하세요, Custodia입니다. 궁금한 점을 물어보세요."));
+}
+
+if (AS_ID) {
+  fetch("/repairs/" + encodeURIComponent(AS_ID))
+    .then(r => r.json())
+    .then(r => { if (!r.error) showAsBar(r); })
+    .catch(() => {});
+}
+
+fetch("/health")
+  .then(r => r.json())
+  .then(d => {
+    dot.classList.add("on");
+    dot.title = `지식베이스 ${d["지식베이스"]}건`;
+  })
+  .catch(() => {});
+greet();
+input.focus();
+</script>
+</body>
+</html>
