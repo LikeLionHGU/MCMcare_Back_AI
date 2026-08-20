@@ -1,9 +1,0 @@
-.git
-.env
-__pycache__/
-debug_html/
-*.log
-*.bak*
-_to_delete/
-mcm_chatbot_share*/
-*.zip

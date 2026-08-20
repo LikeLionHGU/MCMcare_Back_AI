@@ -1,54 +1,12 @@
-# ── 절대 올리면 안 되는 것 ──────────────────────────────────
-# API 키가 들어 있다. GitHub에 올라가면 키가 자동 폐기된다.
 .env
-.env.local
-*.key
-
-# ── 파이썬 ──────────────────────────────────────────────────
+*.env
 __pycache__/
-*.py[cod]
-.Python
-venv/
-env/
-.venv/
-
-# ── 실행 중 생기는 것 ───────────────────────────────────────
-crawler.log
-debug_html/
-*.log
-
-# ── 편집기·OS 설정 (사람마다 달라서 충돌만 난다) ────────────
-.idea/
-.vscode/
-.DS_Store
-Thumbs.db
-
-# ── 2026-08-13 추가 ────────────────────────────────────────
-# 작업 중 만든 백업본 (로컬에만 두면 된다)
-*.bak
-*.bak*
-_to_delete/
-
-# 팀 공유용으로 만든 압축본 — 저장소에 넣으면 중복이다
-mcm_chatbot_share/
-*.zip
-
-# 크롤러 산출물 중 재생성 가능한 것
-failed_urls.txt
-
-# 대화 이력 임시 저장 (재시작 복구용). 저장소에 올릴 것 아님
-.sessions.json
-.sessions.json.tmp
-
-# 작업 중 남은 잔여물 — 공개 저장소에 넣을 이유가 없다
-# 크롤러 개발 때 받아둔 MCM 원본 페이지
-MMKEAVE12CO001.html
-# 예전 중간 산출물 (mcm_products.csv로 대체됨)
-mcm_products_merged.csv
-
-# ── 문서는 로컬에만 둔다 ────────────────────────────────
-# 나중에 README를 올리려면:  git add -f README.md
-*.md
-cleanup_repo.sh
-push_new_repo.sh
-openai_연동부분.py
+*.pyc
+sessions/
+ai-model/**/dataset/
+ai-model/**/*_학습데이터/
+ai-model/**/runs/
+ai-model/**/last.pt
+ai-model/**/yolov8*.pt
+ai-model/**/*.jpg
+ai-model/**/*.png
