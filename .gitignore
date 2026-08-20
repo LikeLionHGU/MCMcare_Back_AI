@@ -52,3 +52,6 @@ mcm_products_merged.csv
 cleanup_repo.sh
 push_new_repo.sh
 openai_연동부분.py
+
+CHAT_QUALITY_REPORT.md
+test_chat_quality.py

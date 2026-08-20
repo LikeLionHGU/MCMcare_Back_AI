@@ -30,6 +30,7 @@ Custodia - MCM 브랜드 AS AI 상담 챗봇
 
 import csv
 import datetime
+import hashlib
 import json
 import os
 import re
@@ -207,14 +208,14 @@ AS_KNOWLEDGE = [
                      "문의처", "상담 가능", "영업시간", "운영시간", "몇 시까지",
                      "몇 시부터", "이메일 주소", "메일 주소", "채팅 상담",
                      "주말에", "공휴일"],
-        "source": "MCM 공식몰 고객서비스 (2026-08-12 확인)",
+        "source": "Custodia 상담센터 (피그마 푸터 · 2026-08-19 확인)",
         "content": (
-            "고객센터 안내:\n"
-            "- 전화: 1600-1976\n"
-            "- 운영 시간: 월요일~금요일 오전 10시 ~ 오후 7시 (주말·공휴일 제외)\n"
-            "- 이메일: contact.kr@mcmworldwide.com\n"
-            "- 채팅 상담: 평일 운영 시간 내 이용 가능\n"
-            "- 1:1 고객 문의 게시판으로도 접수하실 수 있습니다."
+            "상담센터 안내:\n"
+            "- AS 전담 직통번호: 1588-0001 "
+            "(평일 09:00~18:00, 토요일 10:00~15:00)\n"
+            "- 고객 상담 대표번호: 1588-0000 (평일 09:00~18:00)\n"
+            "- AS 관련 문의는 전담 직통번호로 안내한다.\n"
+            "- 이메일: contact.kr@mcmworldwide.com"
         ),
     },
     {
@@ -455,10 +456,15 @@ def find_repair(as_id):
 
     조회 순서:
       1) Spring 서버 (SPRING_API_URL이 설정돼 있을 때만)
-      2) as_dummy.json
+      2) as_dummy.json  — Spring을 안 쓸 때만
 
-    서버가 죽어도 챗봇은 더미로 계속 답한다.
-    시연 중 백엔드가 멈췄다고 챗봇까지 멈추면 안 되기 때문.
+    [더미 폴백을 없앤 이유]
+    전에는 Spring 조회가 실패하면 as_dummy.json으로 넘어갔다.
+    서버가 잠깐 죽으면 챗봇이 김민서의 가짜 접수 건을 진짜처럼 설명한다.
+    에러가 안 나니 아무도 눈치채지 못한다 — 조용히 틀린 답을 하는 게 제일 나쁘다.
+
+    그래서 Spring을 쓰기로 했으면 더미로 내려가지 않는다.
+    못 찾으면 못 찾았다고 말한다. 왜 못 찾았는지는 lookup_failure()가 알려준다.
     """
     if not as_id:
         return None
@@ -466,6 +472,8 @@ def find_repair(as_id):
 
     if spring_client is not None and spring_client.is_enabled():
         found = spring_client.fetch_repair(key)
+        if not found:
+            return None            # 더미로 내려가지 않는다
         if found:
             # 서버의 DetailResDto에는 상품코드가 없고 모델명만 있다.
             # 챗봇은 상품코드로 소재·치수를 찾으므로, 코드가 비어 있으면
@@ -483,6 +491,19 @@ def find_repair(as_id):
         if r["as_id"].upper() == key:
             return r
     return None
+
+
+def lookup_failure():
+    """
+    직전 접수 건 조회가 왜 실패했는지. 고객에게 할 말이 다르다.
+
+      "not_found"  그런 접수번호가 없거나 본인 건이 아니다  → 번호 확인 안내
+      "error"      서버에 못 닿았다                        → 잠시 후 재시도 안내
+      ""           Spring을 안 쓰는 중이거나 성공했다
+    """
+    if spring_client is None or not spring_client.is_enabled():
+        return ""
+    return spring_client.last_failure()
 
 
 def _join_product(repair):
@@ -510,6 +531,121 @@ def _join_damage(repair):
     return kind or part or "확인 필요"
 
 
+def _ai_damage_note(repair):
+    """
+    AI 판정 손상. 고객이 고른 것과 다르면 그 사실을 같이 알려준다.
+
+    왜: 고객은 "긁힘"이라 골랐는데 AI는 "찢김/파열"로 볼 수 있다.
+        다른 게 오류가 아니라 정보다 — 실물 진단 때 함께 확인하겠다고 안내할 수 있다.
+        같으면 굳이 두 번 말하지 않는다.
+    """
+    ai = (repair.get("damage_category") or "").strip()
+    if not ai:
+        return None
+    mine = (repair.get("damage_type") or "").strip()
+    if ai == mine:
+        return None
+    return (f"{ai} (고객이 접수 때 고른 것은 '{mine}'이다. "
+            "다르게 보인다는 점만 알리고, 최종 판단은 실물 진단 후라고 안내한다.)"
+            if mine else ai)
+
+
+# ── 단계별 설명 상수 ─────────────────────────────────────────
+# 왜: Spring이 timeline을 내려주지 않거나 status 코드만 줄 때
+#     GPT가 일반적인 AS 흐름으로 내용을 지어내는 것을 막는다.
+#     각 단계에서 '지금 무슨 상황인지'를 명시적으로 자료에 넣어
+#     GPT가 추측이 아닌 사실을 말하게 한다.
+STAGE_GUIDE = {
+    "RECEIPT": (
+        "접수중 단계 안내:\n"
+        "- 아직 픽업 예약이 완료되지 않았거나 기사 배정 대기 중이다.\n"
+        "- 제품은 고객님이 보관 중이다. 수선 센터에 도착하지 않았다.\n"
+        "- 수선·검수·발송은 아직 시작되지 않았다. 그 단계를 언급하지 마라.\n"
+        "- 다음 단계는 픽업 완료(기사가 제품을 수거)다."
+    ),
+    "RECEIPT_COMPLETE": (
+        "접수완료 단계 안내:\n"
+        "- 픽업 예약이 잡혀 있다. 기사가 방문 예정이다.\n"
+        "- 제품은 아직 고객님이 보관 중이다.\n"
+        "- 다음 단계는 픽업 완료(기사가 제품을 수거)다."
+    ),
+    "PICKUP_COMPLETE": (
+        "픽업완료 단계 안내:\n"
+        "- 기사가 제품을 수거했다. 수선 센터로 이동 중이다.\n"
+        "- 다음 단계는 손상부위 진단이다."
+    ),
+    "DIAGNOSING": (
+        "손상부위 진단중 단계 안내:\n"
+        "- 제품이 수선 센터에 도착해 실물 진단이 진행 중이다.\n"
+        "- 진단 결과에 따라 수선 범위와 비용이 확정된다.\n"
+        "- 다음 단계는 손상부위 진단완료다."
+    ),
+    "DIAGNOSIS_COMPLETE": (
+        "손상부위 진단완료 단계 안내:\n"
+        "- 실물 진단이 끝났다. 수선 대기 중이다.\n"
+        "- 다음 단계는 수선 시작이다."
+    ),
+    "REPAIRING": (
+        "수선중 단계 안내:\n"
+        "- 수선 센터에서 제품을 수선하고 있다.\n"
+        "- 다음 단계는 검수다."
+    ),
+    "INSPECTING": (
+        "검수중 단계 안내:\n"
+        "- 수선이 완료되어 품질 검수를 진행 중이다.\n"
+        "- 검수 통과 후 고객에게 발송된다.\n"
+        "- 다음 단계는 발송이다."
+    ),
+    "SHIPPING": (
+        "발송중 단계 안내:\n"
+        "- 검수가 완료되어 제품이 고객에게 발송됐다. 배송 중이다.\n"
+        "- 다음 단계는 배송 완료(고객 수령)다."
+    ),
+    "COMPLETED": (
+        "완료 단계 안내 — 아래를 반드시 지켜라:\n"
+        "- 이 건은 종료되었다.\n"
+        "- '예상 완료일'이라는 표현을 쓰지 마라. 이미 지난 날짜다. '완료일'이라고 불러라.\n"
+        "- 다음 단계가 없다. '다음은 배송입니다' 같은 안내를 하지 마라.\n"
+        "- 고객은 이미 제품을 받았다. 받을 예정이라고 말하지 마라.\n"
+        "- 수선 결과에 문제가 있으면 상담원 연결을 안내해라."
+    ),
+}
+
+# status 코드 → STAGE_GUIDE 키 매핑
+_STATUS_TO_GUIDE_KEY = {
+    "RECEIPT":            "RECEIPT",
+    "RECEIPT_COMPLETE":   "RECEIPT_COMPLETE",
+    "PICKUP_COMPLETE":    "PICKUP_COMPLETE",
+    "DIAGNOSING":         "DIAGNOSING",
+    "DIAGNOSIS_COMPLETE": "DIAGNOSIS_COMPLETE",
+    "REPAIRING":          "REPAIRING",
+    "INSPECTING":         "INSPECTING",
+    "SHIPPING":           "SHIPPING",
+    "COMPLETED":          "COMPLETED",
+}
+
+# 한글 단계명 → 가이드 키 (Spring이 한글로 내려줄 때 대비)
+_STAGE_LABEL_TO_GUIDE_KEY = {
+    "접수중":          "RECEIPT",
+    "접수완료":        "RECEIPT_COMPLETE",
+    "픽업완료":        "PICKUP_COMPLETE",
+    "손상부위 진단중": "DIAGNOSING",
+    "손상부위 진단완료": "DIAGNOSIS_COMPLETE",
+    "수선중":          "REPAIRING",
+    "검수중":          "INSPECTING",
+    "발송중":          "SHIPPING",
+    "완료":            "COMPLETED",
+}
+
+
+def _guide_key(repair):
+    """repair 딕셔너리에서 STAGE_GUIDE 키를 추출한다."""
+    status = (repair.get("status") or "").strip()
+    stage  = (repair.get("stage")  or "").strip()
+    return (_STATUS_TO_GUIDE_KEY.get(status)
+            or _STAGE_LABEL_TO_GUIDE_KEY.get(stage))
+
+
 def repair_knowledge(repair):
     """
     접수 건 하나를 '지식 항목' 형태로 바꾼다.
@@ -527,9 +663,21 @@ def repair_knowledge(repair):
     # 왜: MCM이 실제로 보유한 자산(고객·멤버십 데이터)을 상담에 연결하기 위함.
     #     등급을 알아야 "김민서 고객님" 같은 응대가 가능하다.
     # 주의: 등급별 혜택 문구는 확정된 자료가 없다. 지어내지 말라고 명시한다.
-    if CUSTOMER:
-        name = CUSTOMER.get("name")
-        grade = CUSTOMER.get("membership")
+    # 지금 말을 건 고객이 누구인지.
+    #
+    # Spring 이 붙어 있으면 그 고객의 토큰으로 조회한 이름을 쓴다.
+    # 전역 CUSTOMER 는 as_dummy.json 의 고객(김민서)이라, 그대로 두면
+    # 누가 로그인하든 "김민서 고객님"이라고 부른다 — 남의 이름이다.
+    #
+    # 멤버십 등급은 Spring 에 없다. 더미의 등급을 실제 고객에게 붙이면
+    # 없는 혜택을 말하게 되므로, Spring 을 쓸 때는 등급을 아예 넣지 않는다.
+    me = None
+    if spring_client is not None and spring_client.is_enabled():
+        me = spring_client.fetch_member()
+
+    if me or CUSTOMER:
+        name = (me or CUSTOMER).get("name")
+        grade = None if me else CUSTOMER.get("membership")
         if name:
             lines.append(f"고객 이름: {name} (호칭은 '{name} 고객님')")
         if grade:
@@ -547,6 +695,8 @@ def repair_knowledge(repair):
         ("접수번호",  repair.get("as_id")),
         ("제품",      _join_product(repair)),
         ("손상 내용", _join_damage(repair)),
+        ("고객이 적은 손상 설명", repair.get("damage_description")),
+        ("AI가 사진에서 판정한 손상", _ai_damage_note(repair)),
         ("접수 방식", repair.get("intake_type")),
         ("접수일",    repair.get("received_at")),
         ("현재 단계", repair.get("stage")),
@@ -559,10 +709,18 @@ def repair_knowledge(repair):
         st = repair.get("location_status")
         lines.append(f"현재 위치: {loc} ({st})" if st else f"현재 위치: {loc}")
 
+    gkey = _guide_key(repair)
+    is_completed = (gkey == "COMPLETED")
+
     if repair.get("expected_at"):
         upd = repair.get("updated_at")
-        lines.append(f"예상 완료일: {repair['expected_at']}"
-                     + (f" (최종 갱신 {upd})" if upd else ""))
+        if is_completed:
+            # 완료 건은 "예상 완료일"이 아니라 "완료일"로 표기한다
+            lines.append(f"완료일: {repair['expected_at']}"
+                         + (f" (갱신 {upd})" if upd else ""))
+        else:
+            lines.append(f"예상 완료일: {repair['expected_at']}"
+                         + (f" (최종 갱신 {upd})" if upd else ""))
     if repair.get("tracking_number"):
         lines.append(f"운송장 번호: {repair['tracking_number']}")
 
@@ -574,6 +732,10 @@ def repair_knowledge(repair):
         for t in todo:
             note = t.get("note")
             lines.append(f"- [예정] {t.get('step')}" + (f" — {note}" if note else ""))
+
+    # 단계별 사실 안내 — GPT가 추측으로 채우는 것을 막는다
+    if gkey and gkey in STAGE_GUIDE:
+        lines.append(STAGE_GUIDE[gkey])
 
     return {
         "topic": f"내 AS 접수 {repair['as_id']}",
@@ -802,8 +964,13 @@ SYSTEM_PROMPT = """당신은 Custodia의 MCM AS 상담 직원입니다.
     어느 제품인지 물어보세요. (겉모습이 같고 크기만 다른 제품이 실제로 있습니다)
 11. '내 AS 접수' 자료가 있으면 그건 지금 상담 중인 고객의 건입니다.
     "제 가방", "언제 와요?", "지금 어디예요?" 같은 말은 그 건을 가리킵니다.
-    상태·예상 완료일·진행 이력을 그 자료에서 그대로 확인해 답하세요.
-    없는 단계를 지어내지 말고, 아직 안 끝난 단계는 예정이라고 말하세요."""
+    상태·완료일·진행 이력을 그 자료에서 그대로 확인해 답하세요.
+    없는 단계를 지어내지 말고, 아직 안 끝난 단계는 예정이라고 말하세요.
+12. 자료에 없는 진행 상황을 일반적인 AS 흐름으로 추측해서 채우지 마세요.
+    자료에 없으면 "아직 안내드릴 정보가 없어요. 상담원에게 확인 부탁드릴게요."라고 하세요.
+13. AS와 무관한 잡담이 오면 한 문장으로만 가볍게 받고 바로 AS 주제로 돌아오세요.
+    그 주제에 대해 의견·추천·감상을 덧붙이지 마세요.
+    예: "재미있는 말씀이네요. AS 관련해 궁금한 점 있으실까요?" """
 
 
 # ── 개인정보 마스킹 ──────────────────────────────────────────
@@ -1116,7 +1283,11 @@ KNOWLEDGE = AS_KNOWLEDGE + load_products()
 
 # "제가 가진 자료로 확인이 어렵습니다" 같은 표현은 내부 사정을 손님에게 말하는 것이라
 # 챗봇 티가 난다. 무엇을 못 하는지가 아니라 어디서 되는지를 알려준다.
-AGENT_TEL = "1600-1976"
+# AS 전담 직통번호.
+# 왜 MCM 공식 고객센터(1600-1976)가 아닌가:
+#   우리 서비스는 AS 상담에 특화돼 있고, 화면 푸터에도 AS 전담 번호가 따로 있다.
+#   챗봇이 화면과 다른 번호를 말하면 시연에서 바로 눈에 띈다.
+AGENT_TEL = "1588-0001"
 
 NO_ANSWER = (f"이 부분은 상담원이 직접 확인해 드리는 게 정확해요. "
              f"고객센터 {AGENT_TEL}으로 문의해 주시겠어요?")
@@ -1235,6 +1406,28 @@ def _retrieve(question, history=None, as_id=None):
     # 고객이 "내 가방"이라고만 해도 무엇인지 알아야 하기 때문.
     repair = find_repair(as_id)
     pinned = [repair_knowledge(repair)] if repair else []
+
+    # 접수번호를 받았는데 못 불러온 경우, 그 사실 자체를 자료로 넣는다.
+    # 안 넣으면 GPT 가 "접수 건이 없다"고 단정하거나 일반 안내로 얼버무린다.
+    if as_id and not repair:
+        why = lookup_failure()
+        if why == "error":
+            pinned.append({
+                "topic": "접수 건 조회 실패",
+                "keywords": [], "source": "시스템",
+                "content": ("지금 접수 내역 시스템에 연결되지 않아 이 고객의 접수 건을 "
+                            "불러오지 못했다. 진행 상황·예상 완료일·견적은 답하지 말고, "
+                            "일시적인 문제라 잠시 후 다시 확인해 달라고 안내한다. "
+                            "접수 절차·제품 관리 같은 일반 문의는 평소대로 답한다."),
+            })
+        elif why == "not_found":
+            pinned.append({
+                "topic": "접수 건 조회 실패",
+                "keywords": [], "source": "시스템",
+                "content": (f"'{as_id}' 접수 건을 찾지 못했다. 없는 번호이거나 "
+                            "이 고객의 접수 건이 아니다. 진행 상황을 지어내지 말고 "
+                            "접수번호를 다시 확인해 달라고 안내한다."),
+            })
 
     # 이 고객의 AI 예상 견적 결과가 서버에 있으면 함께 넣는다.
     # 왜: 견적이 이미 나온 건인데도 "견적 받아보세요"라고 답하면 앞뒤가 안 맞는다.
@@ -1374,22 +1567,48 @@ def opening_message(as_id):
     """
     repair = find_repair(as_id)
     if not repair:
+        # as_id 를 줬는데 못 찾았으면 그 사실을 말한다.
+        # 조용히 일반 인사말로 넘어가면 고객은 자기 건을 보고 있다고 착각한다.
+        why = lookup_failure() if as_id else ""
+        if as_id and why == "error":
+            return ("안녕하세요, Custodia AI 컨시어지입니다.\n"
+                    "접수 내역을 불러오는 데 일시적으로 문제가 있어요. "
+                    "잠시 후 다시 시도해 주세요. 그 밖의 문의는 지금도 도와드릴 수 있습니다.")
+        if as_id and why == "not_found":
+            return ("안녕하세요, Custodia AI 컨시어지입니다.\n"
+                    f"{as_id} 접수 건을 찾지 못했습니다. 접수번호를 다시 확인해 주시겠어요? "
+                    "접수 절차나 제품 관리에 대해서는 지금도 도와드릴 수 있습니다.")
         return ("안녕하세요, Custodia AI 컨시어지입니다.\n"
                 "수선 접수나 제품 관리에 대해 궁금한 점을 편하게 물어보세요.")
 
-    # 손상 표현은 자연어 설명(damage_description)을 우선 쓴다.
-    # damage_type은 백엔드 enum 라벨("금속부품손상")이라 문장에 넣으면 딱딱하다.
-    # 서버(DetailResDto)에는 손상 정보가 없을 수 있다. 있는 것부터 순서대로 쓴다.
-    #   설명("지퍼 슬라이더가 빠져…") > 유형("금속부품손상") > 부위("메인 수납부 지퍼") > "수선"
-    damage = (repair.get("damage_description")
-              or repair.get("damage_type")
+    # 손상 표현.
+    #
+    # damage_description 을 먼저 쓰던 것을 바꿨다.
+    # 고객이 자유롭게 쓴 문장이라 "사용 중 벌어졌습니다" 처럼 종결어미가 붙어 있고,
+    # 그대로 넣으면 "백팩 — 사용 중 벌어졌습니다 건이" 가 되어 문장이 깨진다.
+    # 유형·부위는 명사라 문장에 넣어도 자연스럽다.
+    #   유형("금속부품손상") > 부위("메인 수납부 지퍼") > "수선"
+    damage = (repair.get("damage_type")
               or repair.get("damage_part")
               or "수선")
-    line = (f"{repair.get('as_id')} 건을 확인했습니다. "
+
+    # 호칭. Spring 이 붙어 있으면 로그인한 고객 이름을 쓴다.
+    # 없으면 이름 없이 간다 — 남의 이름(더미 고객)을 부르는 것보다 낫다.
+    me = None
+    if spring_client is not None and spring_client.is_enabled():
+        me = spring_client.fetch_member()
+    who = (me or CUSTOMER or {}).get("name")
+    call = f"{who} 고객님, " if who else ""
+
+    line = (f"{call}{repair.get('as_id')} 건을 확인했습니다. "
             f"{repair.get('product_name') or '접수하신 제품'} — {damage} 건이 "
             f"현재 '{repair.get('stage') or '확인 중'}' 단계입니다.")
     if repair.get("expected_at"):
-        line += f" 예상 완료일은 {repair['expected_at']}입니다."
+        gkey = _guide_key(repair)
+        if gkey == "COMPLETED":
+            line += f" 완료일은 {repair['expected_at']}입니다."
+        else:
+            line += f" 예상 완료일은 {repair['expected_at']}입니다."
     return "안녕하세요, Custodia AI 컨시어지입니다.\n" + line + " 궁금하신 점을 말씀해 주세요."
 
 
@@ -1457,12 +1676,48 @@ try:
     #
     # DB를 쓰지 않는 이유: 기획상 상담 내역은 영구 저장하지 않기로 했다(Frame 718).
     # 이건 '영구 보관'이 아니라 '재시작을 견디는 임시 저장'이다.
+    def _session_key(sid):
+        """
+        대화 세션 키. 클라이언트가 보낸 값을 그대로 쓰지 않는다.
+
+        [왜]
+        전에는 session_id 를 그대로 키로 썼다. 회원 A 가 "m5" 를 보내면
+        5번 회원의 대화 기록이 딸려왔다 — 남의 상담 내용이 보이는 것이다.
+        토큰 해시를 앞에 붙이면 같은 "m5" 라도 사람마다 다른 방이 된다.
+
+        토큰이 없으면(로컬 테스트) 예전처럼 동작한다.
+        """
+        if not sid:
+            return None
+        token = ""
+        if spring_client is not None:
+            try:
+                token = spring_client.current_token()
+            except Exception:
+                token = ""
+        if not token:
+            return sid
+        return hashlib.sha256(token.encode()).hexdigest()[:12] + ":" + sid
+
     SESSIONS: dict[str, list] = {}
     MAX_SESSIONS = 500          # 메모리가 무한정 늘지 않게 상한을 둔다
     SESSION_FILE = os.getenv("SESSION_FILE", os.path.join(BASE_DIR, ".sessions.json"))
 
+    # 대화를 디스크에 남길지.
+    #
+    # [왜 기본값이 꺼짐인가]
+    # 기획상 상담 내역은 영구 저장하지 않기로 했다(Frame 718).
+    # 그리고 고객이 대화 중에 전화번호·주소를 적으면 그게 그대로 파일에 남는다.
+    # GPT 로 보낼 때는 가리는데 디스크에는 원문이 쓰이고 있었다 — 앞뒤가 안 맞는다.
+    #
+    # 재시작을 견뎌야 하는 상황(로컬 개발 중 --reload)에서만 켠다.
+    #   SESSION_PERSIST=1 uvicorn ...
+    SESSION_PERSIST = os.getenv("SESSION_PERSIST", "0") == "1"
+
     def _load_sessions():
         """서버가 뜰 때 이전 대화를 복구한다. 실패해도 그냥 빈 상태로 시작한다."""
+        if not SESSION_PERSIST:
+            return
         try:
             if os.path.exists(SESSION_FILE):
                 with open(SESSION_FILE, encoding="utf-8") as f:
@@ -1475,6 +1730,8 @@ try:
 
     def _save_sessions():
         """대화가 바뀔 때마다 파일에 쓴다. 실패해도 상담은 계속되어야 한다."""
+        if not SESSION_PERSIST:
+            return
         try:
             tmp = SESSION_FILE + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
@@ -1514,16 +1771,17 @@ try:
           (예: "치수 알려줘" → "5건입니다" → "12CO001이요" → 해당 상품 치수)
         """
         sid = req.session_id
-        history = SESSIONS.get(sid, []) if sid else []
+        key = _session_key(sid)
+        history = SESSIONS.get(key, []) if key else []
 
         started = time.perf_counter()
         result = answer(req.message, history, req.as_id)
         log_turn(req.message, result, time.perf_counter() - started, req.as_id)
 
         if sid:
-            if sid not in SESSIONS and len(SESSIONS) >= MAX_SESSIONS:
+            if key not in SESSIONS and len(SESSIONS) >= MAX_SESSIONS:
                 SESSIONS.pop(next(iter(SESSIONS)))       # 가장 오래된 것부터 버린다
-            turns = SESSIONS.setdefault(sid, [])
+            turns = SESSIONS.setdefault(key, [])
             turns.append({"role": "user", "content": req.message})
             turns.append({"role": "assistant", "content": result["answer"]})
             del turns[:-HISTORY_TURNS * 2]               # 최근 N턴만 남긴다
@@ -1542,7 +1800,8 @@ try:
           {"type":"done"}
         """
         sid = req.session_id
-        history = list(SESSIONS.get(sid, [])) if sid else []
+        key = _session_key(sid)
+        history = list(SESSIONS.get(key, [])) if key else []
         r = _retrieve(req.message, history, req.as_id)
 
         def event_stream():
@@ -1572,9 +1831,9 @@ try:
 
             # 대화 저장은 답변이 끝난 뒤에 한다
             if sid:
-                if sid not in SESSIONS and len(SESSIONS) >= MAX_SESSIONS:
+                if key not in SESSIONS and len(SESSIONS) >= MAX_SESSIONS:
                     SESSIONS.pop(next(iter(SESSIONS)))
-                turns = SESSIONS.setdefault(sid, [])
+                turns = SESSIONS.setdefault(key, [])
                 turns.append({"role": "user", "content": req.message})
                 turns.append({"role": "assistant", "content": full})
                 del turns[:-HISTORY_TURNS * 2]
@@ -1631,7 +1890,8 @@ try:
     @app.delete("/chat/{session_id}", summary="대화 초기화")
     def reset(session_id: str):
         """시연 중 처음부터 다시 시작할 때 사용합니다."""
-        gone = SESSIONS.pop(session_id, None) is not None
+        # 삭제도 같은 규칙으로 키를 만든다. 남의 세션을 지울 수 없다.
+        gone = SESSIONS.pop(_session_key(session_id), None) is not None
         if gone:
             _save_sessions()
         # 서버 조회 캐시도 함께 비운다.
