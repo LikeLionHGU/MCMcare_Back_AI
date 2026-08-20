@@ -550,6 +550,132 @@ def _ai_damage_note(repair):
             if mine else ai)
 
 
+# ─────────────────────────────────────────────────────────────
+# AS 단계별 안내 (스프링 AsStatus 9단계 기준)
+#
+# 왜 필요한가:
+#   GPT는 timeline의 [예정] 문구를 보고 "지금 진행 중"인 것처럼 답한다.
+#   실제로 AS-2026-00109(완료)에서 "발송은 아직 진행 중"이라는
+#   모순된 답이 나갔다. 단계별 사실을 코드에 고정해 추측을 막는다.
+# ─────────────────────────────────────────────────────────────
+
+STAGE_ORDER = [
+    "접수중", "접수완료", "픽업완료", "손상부위 진단중", "손상부위 진단완료",
+    "수선중", "검수중", "발송중", "완료",
+]
+
+# 스프링 코드명 → 화면 라벨. 어느 쪽이 와도 받는다.
+STAGE_CODE_TO_LABEL = {
+    "ESTIMATED": "접수중",
+    "PICKUP_BOOKED": "접수완료",
+    "PICKED_UP": "픽업완료",
+    "RECEIVED": "손상부위 진단중",
+    "DIAGNOSED": "손상부위 진단완료",
+    "REPAIRING": "수선중",
+    "INSPECTING": "검수중",
+    "SHIPPING": "발송중",
+    "COMPLETED": "완료",
+    "CANCELLED": "접수 취소",
+}
+
+# 단계별: (지금 벌어지는 일, 고객이 할 일, 다음 단계 안내)
+STAGE_GUIDE = {
+    "접수중": (
+        "고객이 제품 정보와 손상 사진을 입력해 접수를 진행하는 중이다. 아직 픽업 예약 전이다.",
+        "예상 견적을 확인하고 픽업 예약을 완료해야 다음 단계로 넘어간다.",
+        "다음: 픽업 예약(접수완료)",
+    ),
+    "접수완료": (
+        "픽업 예약이 잡힌 상태다. 제품은 아직 고객이 가지고 있고 기사는 방문 전이다.",
+        "예약한 날짜·시간에 제품을 준비해 두면 된다. 동봉할 것은 없다.",
+        "다음: 기사 방문 수거(픽업완료)",
+    ),
+    "픽업완료": (
+        "기사가 제품을 수거해 수선 센터로 이동 중이다. 아직 센터에 도착하지 않았다.",
+        "따로 할 일은 없다.",
+        "다음: 센터 입고 후 실물 진단(손상부위 진단중)",
+    ),
+    "손상부위 진단중": (
+        "제품이 수선 센터에 입고되어 전문가가 실물을 확인하는 중이다. 수선 범위는 아직 확정되지 않았다.",
+        "진단 결과가 나오면 안내된다. 지금은 기다리면 된다.",
+        "다음: 진단 결과 확정(손상부위 진단완료)",
+    ),
+    "손상부위 진단완료": (
+        "실물 진단이 끝나 수선 범위가 확정된 상태다. 수선 작업은 아직 시작 전이다.",
+        "확정된 수선 범위와 비용을 확인하면 된다. 비용이 접수 시 예상 견적과 다를 수 있다.",
+        "다음: 수선 작업 시작(수선중)",
+    ),
+    "수선중": (
+        "수선 센터에서 실제 수선 작업이 진행 중이다. 가장 시간이 걸리는 단계다.",
+        "따로 할 일은 없다. 예상 완료일을 참고하면 된다.",
+        "다음: 품질 검수(검수중)",
+    ),
+    "검수중": (
+        "수선이 끝나고 품질 기준에 맞는지 최종 점검 중이다. 아직 발송 전이다.",
+        "따로 할 일은 없다.",
+        "다음: 고객 배송 발송(발송중)",
+    ),
+    "발송중": (
+        "검수를 통과해 고객에게 배송이 시작된 상태다. 제품은 이미 센터를 떠났다.",
+        "운송장 번호가 있으면 배송 조회가 가능하다. 수령 시 상태를 확인하면 된다.",
+        "다음: 수령 확인(완료)",
+    ),
+    "완료": (
+        "이 접수 건은 모든 단계가 끝났다. 수선·검수·발송·배송을 포함해 진행 중인 절차가 하나도 없다.",
+        "제품을 수령했다. 수선 결과에 문제가 있으면 상담원에게 문의하면 된다.",
+        "다음 단계 없음. 종료된 건이다.",
+    ),
+    "접수 취소": (
+        "이 접수 건은 취소되어 진행되지 않는다.",
+        "다시 수선을 원하면 새로 접수하면 된다.",
+        "다음 단계 없음. 종료된 건이다.",
+    ),
+}
+
+
+def _normalize_stage(stage):
+    """스프링이 코드명을 주든 라벨을 주든 라벨로 통일한다."""
+    if not stage:
+        return None
+    s = str(stage).strip()
+    return STAGE_CODE_TO_LABEL.get(s.upper(), s)
+
+
+def stage_guide_lines(stage):
+    """
+    현재 단계에 해당하는 사실만 자료로 만들어 돌려준다.
+    GPT가 [예정] 항목을 현재 진행 중인 일로 착각하는 것을 막는 핵심.
+    """
+    label = _normalize_stage(stage)
+    guide = STAGE_GUIDE.get(label)
+    if not guide:
+        return []
+
+    now, todo, nxt = guide
+    lines = [
+        "",
+        f"현재 단계 '{label}'에 대한 확정 사실 (이 내용이 다른 자료보다 우선한다):",
+        f"- 지금 상황: {now}",
+        f"- 고객이 할 일: {todo}",
+        f"- {nxt}",
+    ]
+
+    if label in ("완료", "접수 취소"):
+        lines.append(
+            "- 주의: 이 건은 종료되었다. 남은 절차가 있는 것처럼 말하지 마라."
+        )
+    else:
+        idx = STAGE_ORDER.index(label) if label in STAGE_ORDER else -1
+        if idx >= 0:
+            remaining = STAGE_ORDER[idx + 1:]
+            if remaining:
+                lines.append(
+                    "- 아직 오지 않은 단계: " + " → ".join(remaining)
+                    + " (이 단계들은 진행 중이 아니다)"
+                )
+    return lines
+
+
 def repair_knowledge(repair):
     """
     접수 건 하나를 '지식 항목' 형태로 바꾼다.
@@ -621,13 +747,58 @@ def repair_knowledge(repair):
         lines.append(f"운송장 번호: {repair['tracking_number']}")
 
     if done or todo:
+        # 순서 기반으로 [완료]/[현재]/[예정] 판정.
+        # done 플래그는 스프링 데이터 정합성 문제(COMPLETED인데 SHIPPING이 done=false)가
+        # 있어서 신뢰하지 않는다. 현재 단계의 인덱스를 기준으로 판정한다.
+        #
+        # stage는 statusLabel(Korean) 또는 status(enum 코드)가 올 수 있다.
+        # status 코드가 STAGE_CODE_TO_LABEL에 정확히 매핑되므로 더 신뢰한다.
+        _stage_raw = repair.get("stage") or repair.get("status") or ""
+        cur_label = _normalize_stage(_stage_raw)
+        # stage(Korean 라벨)가 STAGE_ORDER에 없으면 status 코드로 재시도
+        if cur_label not in STAGE_ORDER:
+            cur_label = _normalize_stage(repair.get("status") or "")
+        cur_idx = STAGE_ORDER.index(cur_label) if cur_label in STAGE_ORDER else -1
+
+        # timeline entry → STAGE_ORDER 인덱스.
+        # spring_client는 entry["status"]에 항상 enum 코드를 넣으므로 우선 사용.
+        # 없으면 step(라벨 or 코드) 으로 시도.
+        def _step_idx(t):
+            for key in ("status", "step"):
+                label = _normalize_stage(t.get(key) or "")
+                if label in STAGE_ORDER:
+                    return STAGE_ORDER.index(label)
+            return -1
+
         lines.append("진행 이력:")
-        for t in done:
+        all_steps = done + todo
+        for t in all_steps:
+            step = t.get("step") or ""
             tail = " · ".join(x for x in (t.get("date"), t.get("note")) if x)
-            lines.append(f"- [완료] {t.get('step')}" + (f" — {tail}" if tail else ""))
-        for t in todo:
-            note = t.get("note")
-            lines.append(f"- [예정] {t.get('step')}" + (f" — {note}" if note else ""))
+            suffix = f" — {tail}" if tail else ""
+
+            if cur_idx >= 0:
+                s_idx = _step_idx(t)
+                if s_idx >= 0:
+                    if s_idx < cur_idx:
+                        tag = "[완료]"
+                    elif s_idx == cur_idx:
+                        tag = "[현재]"
+                    else:
+                        tag = "[예정]"
+                else:
+                    # STAGE_ORDER에 없는 값은 기존 done 플래그 그대로
+                    tag = "[완료]" if t.get("done") else "[예정]"
+            else:
+                # 현재 단계가 STAGE_ORDER에 없으면 기존 동작 유지
+                tag = "[완료]" if t.get("done") else "[예정]"
+
+            lines.append(f"- {tag} {step}{suffix}")
+
+    # stage_guide_lines: status(enum 코드)가 STAGE_CODE_TO_LABEL에 정확히 매핑되므로
+    # 우선 사용하고, 없으면 stage(Korean 라벨 or 코드)로 시도한다.
+    _guide_stage = repair.get("status") or repair.get("stage") or ""
+    lines.extend(stage_guide_lines(_guide_stage))
 
     return {
         "topic": f"내 AS 접수 {repair['as_id']}",
@@ -857,7 +1028,10 @@ SYSTEM_PROMPT = """당신은 Custodia의 MCM AS 상담 직원입니다.
 11. '내 AS 접수' 자료가 있으면 그건 지금 상담 중인 고객의 건입니다.
     "제 가방", "언제 와요?", "지금 어디예요?" 같은 말은 그 건을 가리킵니다.
     상태·예상 완료일·진행 이력을 그 자료에서 그대로 확인해 답하세요.
-    없는 단계를 지어내지 말고, 아직 안 끝난 단계는 예정이라고 말하세요."""
+    없는 단계를 지어내지 말고, 아직 안 끝난 단계는 예정이라고 말하세요.
+12. 자료의 "현재 단계"와 "확정 사실" 항목이 최우선이다. 이와 어긋나게 답하지 마세요.
+13. 진행 이력의 [예정] 항목 설명 문구를 지금 벌어지는 일처럼 쓰지 마세요.
+14. 현재 단계가 '완료'면 모든 절차가 끝난 것입니다. 발송·배송이 남았다고 절대 말하지 마세요."""
 
 
 # ── 개인정보 마스킹 ──────────────────────────────────────────
