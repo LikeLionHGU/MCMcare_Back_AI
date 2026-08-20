@@ -1,0 +1,43 @@
+name: deploy
+
+# main 브랜치 푸시에만 동작한다.
+# pull_request 를 넣으면 외부인이 fork 해서 보낸 PR 로도 서버에서 코드가 실행된다.
+# 이 레포는 Public 이므로 반드시 push 로 한정한다.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-ai
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    timeout-minutes: 10
+
+    steps:
+      - name: 배포
+        run: ~/deploy-ai.sh
+
+      - name: 상태 확인
+        run: |
+          sleep 3
+          fail=0
+          for pair in "8000 AI진단" "8001 챗봇"; do
+            set -- $pair
+            code=$(curl -s -o /dev/null -w "%{http_code}" -m 10 http://localhost:$1/health)
+            echo "  $2 (:$1) → $code"
+            [ "$code" = "200" ] || fail=1
+          done
+
+          echo
+          echo "── AI 진단 ──"
+          curl -s -m 10 http://localhost:8000/health | head -c 200
+          echo
+          echo "── 챗봇 ──"
+          curl -s -m 10 http://localhost:8001/health | head -c 200
+          echo
+
+          [ $fail -eq 0 ] || { echo "기동 실패"; exit 1; }
