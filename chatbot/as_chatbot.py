@@ -1749,7 +1749,10 @@ def opening_message(as_id):
         if completed_date:
             line += f" 완료일은 {completed_date}입니다."
     elif repair.get("expected_at"):
-        line += f" 예상 완료일은 {repair['expected_at']}입니다."
+        if _olabel == "발송중":
+            line += f" 예상 도착일은 {repair['expected_at']}입니다."
+        else:
+            line += f" 예상 완료일은 {repair['expected_at']}입니다."
     return "안녕하세요, Custodia AI 컨시어지입니다.\n" + line + " 궁금하신 점을 말씀해 주세요."
 
 
