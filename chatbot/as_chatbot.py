@@ -1768,7 +1768,8 @@ try:
         상담 화면을 열 때 먼저 보여줄 문장입니다.
         GPT를 부르지 않으므로 항상 정확하고 즉시 응답합니다.
         """
-        return {"message": opening_message(as_id), "as_id": as_id}
+        msg = opening_message(as_id)
+        return {"answer": msg, "message": msg, "as_id": as_id}
 
     @app.delete("/chat/{session_id}", summary="대화 초기화")
     def reset(session_id: str):
