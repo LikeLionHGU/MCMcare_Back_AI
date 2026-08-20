@@ -1700,7 +1700,12 @@ def _retrieve(question, history=None, as_id=None):
             not any(w in q for w in REFER_EXCEPTIONS):
         return {**base, "fallback": _agent_message(q)}
 
-    hits = search(question, KNOWLEDGE)
+    # AS 건이 없는 신규 상담 모드에서는 상품 CSV 데이터를 검색하지 않는다.
+    # AS 이력 없이 들어온 고객에게 제품 목록을 나열하는 것은 기획 범위 밖이다.
+    # AS 건이 있는 상담에서는 기존처럼 전체 KNOWLEDGE를 검색한다.
+    active_knowledge = KNOWLEDGE if as_id else AS_KNOWLEDGE
+
+    hits = search(question, active_knowledge)
     used_history = False
 
     # "12CO001이요", "그거 얼마예요?" 같은 후속 발화는 그 자체로는 검색이 안 된다.
@@ -1723,7 +1728,7 @@ def _retrieve(question, history=None, as_id=None):
         prev = " ".join(m.get("content", "") for m in history
                         if m.get("role") == "user")[-200:]
         if prev.strip():
-            merged = search(f"{prev} {question}", KNOWLEDGE)
+            merged = search(f"{prev} {question}", active_knowledge)
             # 1차에서 아무것도 못 찾았으면 전부 받아들인다.
             #   ("여기선 못해?" 처럼 앞 질문에 딸린 되묻기가 여기 해당)
             # 1차에서 AS 안내는 찾았지만 상품이 없으면 상품만 보탠다.
