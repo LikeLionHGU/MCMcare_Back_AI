@@ -692,6 +692,22 @@ def stage_guide_lines(stage):
     return lines
 
 
+def actual_completed_date(repair):
+    """
+    완료 건의 실제 완료 날짜를 반환한다.
+
+    왜 필요한가:
+      expectedCompletedAt(→ expected_at)은 '당초 예상 완료일'이다.
+      예상보다 일찍 끝나면 타임라인의 '완료' 단계 날짜와 달라진다.
+      opening_message와 repair_knowledge 모두 여기서 가져가면 항상 같은 날짜를 쓴다.
+    """
+    for t in (repair.get("timeline") or []):
+        step_label = _normalize_stage(t.get("status") or t.get("step") or "")
+        if step_label == "완료" and t.get("date"):
+            return t["date"]
+    return repair.get("expected_at")
+
+
 def repair_knowledge(repair):
     """
     접수 건 하나를 '지식 항목' 형태로 바꾼다.
@@ -758,13 +774,23 @@ def repair_knowledge(repair):
     _stage_label = _normalize_stage(repair.get("status") or repair.get("stage") or "")
     is_completed = (_stage_label == "완료")
 
-    if repair.get("expected_at"):
-        upd = repair.get("updated_at")
-        if is_completed:
-            # 완료 건은 "예상 완료일"이 아니라 "완료일"로 표기한다
-            lines.append(f"완료일: {repair['expected_at']}"
+    upd = repair.get("updated_at")
+    if is_completed:
+        # 완료 건: 타임라인의 실제 완료 날짜를 우선 사용한다.
+        # expected_at은 '당초 예상 완료일'이라 실제 완료일과 다를 수 있다.
+        completed_date = actual_completed_date(repair)
+        if completed_date:
+            lines.append(f"완료일: {completed_date}"
                          + (f" (갱신 {upd})" if upd else ""))
-        elif _stage_label == "발송중":
+        orig = repair.get("expected_at")
+        if orig and orig != completed_date:
+            lines.append(
+                f"당초 예상 완료일(참고용): {orig}"
+                " — 고객이 먼저 묻지 않으면 언급하지 말 것."
+                " 날짜가 다른 이유는 예상보다 일찍 완료됐기 때문이다."
+            )
+    elif repair.get("expected_at"):
+        if _stage_label == "발송중":
             # 이미 출고된 상태이므로 "완료일"이 아니라 "도착일"이 자연스럽다
             lines.append(f"예상 도착일: {repair['expected_at']}"
                          + (f" (최종 갱신 {upd})" if upd else ""))
@@ -1076,7 +1102,14 @@ SYSTEM_PROMPT = """당신은 Custodia의 MCM AS 상담 직원입니다.
     고객이 "수선 끝났죠?", "검수 끝났어요?" 등 이전 단계 완료 여부를 물으면 "네, 끝났습니다"라고 인정하세요.
     자료의 '이미 끝난 단계' 항목에 나온 단계들은 모두 완료된 것이므로 부정하지 마세요.
 19. 현재 단계가 '발송중'일 때는 날짜를 "예상 완료일"이 아니라 "예상 도착일"로 부르세요.
-    이미 출고된 상태이므로 "완료"가 아니라 "도착"이 자연스럽습니다. """
+    이미 출고된 상태이므로 "완료"가 아니라 "도착"이 자연스럽습니다.
+20. 인사말에서 안내한 완료일과 대화 중 답하는 완료일은 반드시 같아야 합니다.
+    자료에 "완료일"과 "당초 예상 완료일(참고용)"이 모두 있을 때:
+    - "완료일"이 실제 완료일입니다. 이 날짜로 답하세요.
+    - "당초 예상 완료일(참고용)"은 고객이 먼저 묻기 전에는 언급하지 마세요.
+    - 고객이 다른 날짜를 언급하면 두 날짜의 의미를 구분해 설명하세요.
+      예: "실제 완료일은 8월 5일이고, 당초 예상 완료일은 8월 12일이었습니다."
+    - 이전에 안내한 날짜를 '잘못된 정보일 수 있다'고 부정하지 마세요. """
 
 
 # ── 개인정보 마스킹 ──────────────────────────────────────────
@@ -1709,12 +1742,14 @@ def opening_message(as_id):
     line = (f"{call}{repair.get('as_id')} 건을 확인했습니다. "
             f"{repair.get('product_name') or '접수하신 제품'} — {damage} 건이 "
             f"현재 '{repair.get('stage') or '확인 중'}' 단계입니다.")
-    if repair.get("expected_at"):
-        _olabel = _normalize_stage(repair.get("status") or repair.get("stage") or "")
-        if _olabel == "완료":
-            line += f" 완료일은 {repair['expected_at']}입니다."
-        else:
-            line += f" 예상 완료일은 {repair['expected_at']}입니다."
+    _olabel = _normalize_stage(repair.get("status") or repair.get("stage") or "")
+    if _olabel == "완료":
+        # 완료 건: actual_completed_date가 repair_knowledge와 같은 값을 쓴다 → 날짜 불일치 방지
+        completed_date = actual_completed_date(repair)
+        if completed_date:
+            line += f" 완료일은 {completed_date}입니다."
+    elif repair.get("expected_at"):
+        line += f" 예상 완료일은 {repair['expected_at']}입니다."
     return "안녕하세요, Custodia AI 컨시어지입니다.\n" + line + " 궁금하신 점을 말씀해 주세요."
 
 
