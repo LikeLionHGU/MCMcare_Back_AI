@@ -123,7 +123,10 @@ AS_KNOWLEDGE = [
         "topic": "진행 상황 확인",
         "keywords": ["진행", "상황", "어디", "확인", "조회", "상태", "패스포트", "리페어"],
         "content": (
-            "수선 진행 상황은 리페어 패스포트에서 실시간으로 확인하실 수 있습니다."
+            "AS 진행 상황 안내:\n"
+            "고객님의 현재 단계, 예상 완료일, 진행 이력은 이 자료에서 바로 확인해 답할 수 있다.\n"
+            "'리페어 패스포트에서 확인하세요'라고만 답하지 말 것.\n"
+            "자료에 없어서 정말 모를 때만 '아직 안내드릴 정보가 없어요'라고 하고 상담원 연결을 안내한다."
         ),
     },
     {
@@ -739,8 +742,8 @@ def repair_knowledge(repair):
         st = repair.get("location_status")
         lines.append(f"현재 위치: {loc} ({st})" if st else f"현재 위치: {loc}")
 
-    gkey = _guide_key(repair)
-    is_completed = (gkey == "COMPLETED")
+    _stage_label = _normalize_stage(repair.get("status") or repair.get("stage") or "")
+    is_completed = (_stage_label == "완료")
 
     if repair.get("expected_at"):
         upd = repair.get("updated_at")
@@ -808,9 +811,7 @@ def repair_knowledge(repair):
     _guide_stage = repair.get("status") or repair.get("stage") or ""
     lines.extend(stage_guide_lines(_guide_stage))
 
-    # 단계별 사실 안내 — GPT가 추측으로 채우는 것을 막는다
-    if gkey and gkey in STAGE_GUIDE:
-        lines.append(STAGE_GUIDE[gkey])
+    # stage_guide_lines()가 이미 위에서 STAGE_GUIDE 내용을 추가했으므로 중복 불필요
 
     return {
         "topic": f"내 AS 접수 {repair['as_id']}",
@@ -1048,7 +1049,12 @@ SYSTEM_PROMPT = """당신은 Custodia의 MCM AS 상담 직원입니다.
     자료에 없으면 "아직 안내드릴 정보가 없어요. 상담원에게 확인 부탁드릴게요."라고 하세요.
 16. AS와 무관한 잡담이 오면 한 문장으로만 가볍게 받고 바로 AS 주제로 돌아오세요.
     그 주제에 대해 의견·추천·감상을 덧붙이지 마세요.
-    예: "재미있는 말씀이네요. AS 관련해 궁금한 점 있으실까요?" """
+    예: "재미있는 말씀이네요. AS 관련해 궁금한 점 있으실까요?"
+17. 고객의 AS 접수 자료(현재 단계·예상 완료일·진행 이력)가 있으면 직접 답하세요.
+    "리페어 패스포트에서 확인하세요", "화면에서 보실 수 있습니다" 같은 표현을
+    단독 답변으로 쓰지 마세요. 이미 자료를 받아왔는데 화면으로 돌려보내는 것은 안 됩니다.
+    화면 안내가 필요하면 답을 먼저 말한 뒤 덧붙이세요.
+    (예: "현재 수선중 단계입니다. 예상 완료일은 8월 26일이에요. 자세한 이력은 AS 조회에서도 보실 수 있어요.") """
 
 
 # ── 개인정보 마스킹 ──────────────────────────────────────────
@@ -1682,8 +1688,8 @@ def opening_message(as_id):
             f"{repair.get('product_name') or '접수하신 제품'} — {damage} 건이 "
             f"현재 '{repair.get('stage') or '확인 중'}' 단계입니다.")
     if repair.get("expected_at"):
-        gkey = _guide_key(repair)
-        if gkey == "COMPLETED":
+        _olabel = _normalize_stage(repair.get("status") or repair.get("stage") or "")
+        if _olabel == "완료":
             line += f" 완료일은 {repair['expected_at']}입니다."
         else:
             line += f" 예상 완료일은 {repair['expected_at']}입니다."
