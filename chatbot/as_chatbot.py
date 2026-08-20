@@ -1187,6 +1187,7 @@ SYSTEM_PROMPT = """당신은 Custodia의 MCM AS 상담 직원입니다.
     절대 금지:
     - "수선이 완료되면 발송됩니다" (예상 완료일 이후에 발송이 이어진다는 암시)
     - "검수·발송에 X일 더 소요됩니다" (자료에 없는 기간을 추측해 말하는 것)
+    - "그 후 검수와 발송이 이어질 예정입니다" (예상 완료일 안에 이미 포함된 단계를 이후에 있는 것처럼 표현)
     - 예상 완료일 이후 추가 작업이 있다는 표현 일체 """
 
 
@@ -1833,7 +1834,7 @@ def opening_message(as_id):
         if _olabel == "발송중":
             line += f" 예상 도착일은 {repair['expected_at']}입니다."
         else:
-            line += f" 예상 완료일은 {repair['expected_at']}입니다."
+            line += f" 전체 AS 완료 예정일은 {repair['expected_at']}입니다."
     return "안녕하세요, Custodia AI 컨시어지입니다.\n" + line + " 궁금하신 점을 말씀해 주세요."
 
 
